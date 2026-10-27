@@ -22,6 +22,8 @@ jobs:
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -33,9 +35,11 @@ jobs:
         run: npm ci
 
       - name: Run Rust tests
+        working-directory: src-tauri
         run: cargo test --all-targets
 
       - name: Run clippy
+        working-directory: src-tauri
         run: cargo clippy --all-targets
 
       - name: Run frontend tests
