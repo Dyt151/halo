@@ -11,6 +11,7 @@ import { onPanelShown, openMainWindow } from "../lib/windows";
 import { confirm, getDialog } from "../lib/dialog";
 import { api } from "../lib/ipc";
 import { FILTERS, type FilterKey } from "../lib/filters";
+import { resolvePanelKey } from "../lib/panelKeys";
 import { toastError } from "../lib/toast";
 import ClipItemCard from "../components/ClipItem";
 import ClipContextMenu from "../components/ClipContextMenu";
@@ -187,20 +188,6 @@ export default function Panel() {
   // 方向键与 ⌘⌫ 透传给输入框（光标移动 / 删到行首）。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // 中文输入法用 Enter 上屏候选词：这一下也带 keydown，绝不能当成「回贴」。
-      // Safari/WKWebView 里 isComposing 在 keydown 上可能为 false，故再看 keyCode 229。
-      if (e.isComposing || e.keyCode === 229) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closePanel();
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        focusSearch();
-        return;
-      }
-
       const target = e.target as HTMLElement | null;
       const isSearch = !!target && target === searchRef.current;
       const typing =
@@ -209,37 +196,49 @@ export default function Panel() {
           target.tagName === "TEXTAREA" ||
           target.tagName === "SELECT" ||
           target.isContentEditable);
-      // 面板唤出即聚焦搜索框，所以「搜索框 = 打字区」不能一刀切：
-      // ⌘1~9 与 Enter 在搜索框里必须能用（否则最常用的两个动作在默认焦点下永远失效）。
-      // 其它输入型控件（对话框输入框、模板编辑框）仍然整套透传。
-      if (typing && !isSearch) return;
-      // 对话框打开时键盘归它：DialogHost 的 capture 处理器只吃 Esc/Enter，挡不住 ⌘1~9。
-      if (getDialog()) return;
 
-      const current = items[selected];
+      // 状态机把「这一击该做什么」算成纯决策（见 lib/panelKeys），
+      // 这里只负责执行副作用。DOM 事实在此换算成布尔后传入。
+      const action = resolvePanelKey({
+        key: e.key,
+        metaOrCtrl: !!(e.metaKey || e.ctrlKey),
+        composing: e.isComposing || e.keyCode === 229,
+        isSearch,
+        isTyping: typing,
+        targetInClipCard: !!target?.closest("[data-clip-card]"),
+        dialogOpen: getDialog() !== null,
+        hasTextSelection: !!window.getSelection()?.toString(),
+        hasFilter,
+        numHotkeyEnabled,
+        boardStyle,
+        itemCount: items.length,
+        selected,
+      });
 
-      // ⌘1~9 只在面板内生效（以前注册成全局快捷键，会把所有 App 的 ⌘1~9 抢走，
-      // 浏览器切标签、邮件切账号都用不了）。编号与卡片角标一致：仅无筛选时显示角标。
-      if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
-        if (!numHotkeyEnabled || hasFilter) return;
-        const index = Number(e.key) - 1;
-        const item = items[index];
-        if (!item) return;
-        e.preventDefault();
-        setSelected(index);
-        void paste(item.id).then((outcome) => {
-          if (outcome && autoCloseAfterPaste) void closePanel();
-        });
-        return;
-      }
-
-      // 评审 S3：卡片自己已经处理了 Enter（并从卡片内 stopPropagation），
-      // 这里再补一层「目标在卡片内就不处理」，防止事件顺序变化时重复回贴。
-      if (e.key === "Enter") {
-        if (target?.closest("[data-clip-card]")) return;
-        e.preventDefault();
-        void (async () => {
-          if (isSearch) {
+      switch (action.type) {
+        case "ignore":
+          return;
+        case "close":
+          e.preventDefault();
+          closePanel();
+          return;
+        case "focusSearch":
+          e.preventDefault();
+          focusSearch();
+          return;
+        case "pasteIndex": {
+          const item = items[action.index];
+          if (!item) return; // 状态机已保证合法，双保险。
+          e.preventDefault();
+          setSelected(action.index);
+          void paste(item.id).then((outcome) => {
+            if (outcome && autoCloseAfterPaste) void closePanel();
+          });
+          return;
+        }
+        case "pasteSearch": {
+          e.preventDefault();
+          void (async () => {
             // 搜索防抖（250ms）还没落地就按了回车：先让这次查询真的发出去。
             // 否则贴到的是上一个关键词的结果 —— 用户眼里「打了 abc 却贴出 ab 的第一条」。
             await flushSearch();
@@ -248,58 +247,49 @@ export default function Panel() {
             if (!latest) return;
             const outcome = await paste(latest.id);
             if (outcome && autoCloseAfterPaste) void closePanel();
-            return;
-          }
+          })();
+          return;
+        }
+        case "pasteSelected": {
+          const current = items[selected];
           if (!current) return;
-          const outcome = await paste(current.id);
-          if (outcome && autoCloseAfterPaste) void closePanel();
-        })();
-        return;
-      }
-
-      // 评审 E5：选中项的快捷操作，与右键菜单一致。
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
-        if (!current) return;
-        // 用户手动选中了文字时按 ⌘C，应当复制选中的文字而不是整条记录。
-        if (window.getSelection()?.toString()) return;
-        e.preventDefault();
-        void copyClip(current.id);
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") {
-        if (!current) return;
-        e.preventDefault();
-        void toggleFavorite(current.id, !current.favorite);
-        return;
-      }
-      if (e.key === "Backspace" && (e.metaKey || e.ctrlKey)) {
-        // 搜索框里的 ⌘⌫ 是系统「删到行首」，不能被当成删除条目。
-        if (typing || !current) return;
-        e.preventDefault();
-        void (async () => {
-          if (confirmOnDelete && !(await confirm("确定删除这条记录？", { danger: true }))) return;
-          await remove(current.id);
-        })();
-        return;
-      }
-
-      // 方向键在搜索框里是移动光标，不能拿来切卡片。
-      if (typing) return;
-      const delta =
-        boardStyle === "vertical"
-          ? e.key === "ArrowDown"
-            ? 1
-            : e.key === "ArrowUp"
-              ? -1
-              : 0
-          : e.key === "ArrowRight"
-            ? 1
-            : e.key === "ArrowLeft"
-              ? -1
-              : 0;
-      if (delta !== 0) {
-        e.preventDefault();
-        setSelected((prev) => Math.min(Math.max(prev + delta, 0), Math.max(items.length - 1, 0)));
+          e.preventDefault();
+          void (async () => {
+            const outcome = await paste(current.id);
+            if (outcome && autoCloseAfterPaste) void closePanel();
+          })();
+          return;
+        }
+        case "copy": {
+          const current = items[selected];
+          if (!current) return;
+          e.preventDefault();
+          void copyClip(current.id);
+          return;
+        }
+        case "toggleFavorite": {
+          const current = items[selected];
+          if (!current) return;
+          e.preventDefault();
+          void toggleFavorite(current.id, !current.favorite);
+          return;
+        }
+        case "delete": {
+          const current = items[selected];
+          if (!current) return;
+          e.preventDefault();
+          void (async () => {
+            if (confirmOnDelete && !(await confirm("确定删除这条记录？", { danger: true }))) return;
+            await remove(current.id);
+          })();
+          return;
+        }
+        case "navigate":
+          e.preventDefault();
+          setSelected((prev) =>
+            Math.min(Math.max(prev + action.delta, 0), Math.max(items.length - 1, 0)),
+          );
+          return;
       }
     };
     window.addEventListener("keydown", onKey);

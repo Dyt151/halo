@@ -26,6 +26,7 @@ import {
   outwardUnit,
   sectorPath,
 } from "../lib/ringGeometry";
+import { initialIndex, resolveRingDragEnd, ringCenterTitle } from "../lib/ringState";
 
 /** 与几何模块一致：窗口边长 = 2 × (R + 弹出预留 + 阴影预留)。 */
 const SIZE = RING_SIDE;
@@ -84,21 +85,6 @@ function clearTimer(ref: React.MutableRefObject<number | null>) {
     window.clearTimeout(ref.current);
     ref.current = null;
   }
-}
-
-/**
- * 初始高亮：记住的上次动作 → 第一个可用扇区。
- *
- * 优先「可用」是关键：如果上次用的是图片预设，这次拖的是文本，那一条会被
- * 禁用（占着原位），高亮它会让中心一上来就显示一串「不可用」的原因。
- */
-function initialIndex(actions: RingAction[], suggested: string | null): number {
-  if (suggested) {
-    const i = actions.findIndex((a) => a.id === suggested && a.enabled);
-    if (i >= 0) return i;
-  }
-  const first = actions.findIndex((a) => a.enabled);
-  return first < 0 ? 0 : first;
 }
 
 export default function RingWindow() {
@@ -235,21 +221,19 @@ export default function RingWindow() {
       if (lastHitRef.current !== "segment" && e.payload) {
         hitRef.current(e.payload.x, e.payload.y, true);
       }
-      if (lastHitRef.current !== "segment") {
+      const action =
+        lastHitRef.current === "segment" ? actionsRef.current[activeRef.current] : undefined;
+      const decision = resolveRingDragEnd(lastHitRef.current, action);
+      if (decision.kind === "close") {
         closeRef.current();
         return;
       }
-      const action = actionsRef.current[activeRef.current];
-      if (!action) {
-        closeRef.current();
-        return;
-      }
-      if (action.enabled) {
+      if (decision.kind === "execute") {
         execRef.current(action);
         return;
       }
       // 禁用扇区：不执行，也不静默吞掉——把原因摆在中心让用户看见。
-      rejectRef.current(action.disabled_reason ?? "这个动作在这批文件上不可用");
+      rejectRef.current(decision.reason);
     });
     return () => {
       clearTimer(collapseTimerRef);
@@ -400,14 +384,7 @@ export default function RingWindow() {
    * 单一格式写「3 个 PNG」，同类混选写「3 张图片」，跨类才写混合——
    * 选了 20 张 PNG 还只写「图片」等于什么都没说。
    */
-  const centerTitle = (() => {
-    const kind = snap.category;
-    if (!kind) return `${snap.count} 个文件`;
-    if (kind === "图片") return `${snap.count} 张图片`;
-    if (kind === "文本") return `${snap.count} 个文本`;
-    if (kind === "混合文件") return `${snap.count} 个文件 · 混合`;
-    return `${snap.count} 个 ${kind}`;
-  })();
+  const centerTitle = ringCenterTitle(snap.count, snap.category);
 
   // 扇区：几何 path + 动画参数（活动扇区沿径向弹出并额外放大 2.5%）。
   const sectors = useMemo(

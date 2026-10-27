@@ -10,25 +10,10 @@ import { api } from "../lib/ipc";
 import { onModuleStateChanged } from "../lib/events";
 import { confirm } from "../lib/dialog";
 import { errorMessage } from "../lib/errors";
+import { matchesMime } from "../lib/mime";
 import { toast, toastError } from "../lib/toast";
 import type { ClipItem as ClipItemType, ContributionEntry } from "../lib/types";
 import type { ContextMenuState, ModuleAction } from "../components/ClipContextMenu";
-
-/** 判断剪贴板条目是否满足模块声明的 mime 过滤条件。 */
-export function matchesMime(contentType: ClipItemType["content_type"], mime: string[]): boolean {
-  if (mime.length === 0) return true;
-  const kind = contentType;
-  return mime.some((m) => {
-    if (m === "*" || m === "*/*") return true;
-    const [group, sub] = m.split("/");
-    if (sub === "*") return group === kind;
-    if (kind === "text" && group === "text") return true;
-    if (kind === "image" && group === "image") return true;
-    if (kind === "html" && (m === "text/html" || group === "text")) return true;
-    if (kind === "files" && m === "application/pdf") return true;
-    return false;
-  });
-}
 
 export function useClipActions() {
   const paste = useClipStore((s) => s.paste);
