@@ -10,7 +10,9 @@ src-tauri/target/
 .DS_Store
 .AppleDouble
 .LSOverride
-Icon?
+# 注意：不要用 `Icon?` 忽略 macOS Finder 自定义图标文件——在大小写不敏感的
+# macOS 上 `Icon?` 会误匹配 `icons/` 目录，把 src-tauri/icons 整个排除掉，
+# 导致 tauri::generate_context!() 在编译/CI 时找不到 bundle.icon 引用的图标。
 ._*
 
 # --- 日志 ---
