@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Finder Sync 扩展必须启用 App Sandbox。
+
+  不声明 App Group / 用户选择文件权限：
+  - 请求队列写在扩展自己的容器里，主程序（未沙盒）直接读；
+  - 扩展不读文件内容，只把 Finder 给的路径字符串写进 JSON。
+  这样本地 ad-hoc 签名也能工作。正式分发若改用 App Group，
+  再给扩展和主程序同时加 com.apple.security.application-groups。
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+</dict>
+</plist>

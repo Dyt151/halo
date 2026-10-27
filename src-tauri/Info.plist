@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ClipBase 的 macOS 静态 Info.plist。
+
+  Finder 右键菜单不再使用 NSServices（那只能出现在「服务」子菜单）。菜单由
+  Contents/PlugIns/ClipBaseFinderExtension.appex 提供，见 src-tauri/finder-extension。
+
+  CFBundleURLTypes 注册 clipbase-finder://，用途是让沙盒里的扩展在投递请求后
+  唤醒主程序；主程序本身通过轮询队列执行动作，不依赖 URL 携带参数。
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.clipbase.app.finder</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>clipbase-finder</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>ClipBase 需要 AppleScript：在 Terminal 中进入所选目录，以及读取 Finder 当前选中的文件以提供环形转换。</string>
+    <!--
+      纯菜单栏 App（评审 M5）：剪贴板工具常驻后台，不应在 Dock 里留一个图标，
+      也不应在启动时把用户从当前工作抢走。置 LSUIElement 后进程以
+      NSApplicationActivationPolicyAccessory 运行，主窗口需要时再显式激活
+      （见 window.rs 的 show_main_window）。
+    -->
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>

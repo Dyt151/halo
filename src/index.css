@@ -1,0 +1,620 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+
+  /* 背景层级 */
+  --bg-window: #1e1e1e;
+  --bg-group: #2c2c2e;
+  --bg-raised: #3a3a3c;
+  --fill-input: rgba(255, 255, 255, 0.05);
+  --fill-hover: rgba(255, 255, 255, 0.08);
+  --fill-active: rgba(255, 255, 255, 0.12);
+  --fill-selected: rgba(255, 255, 255, 0.1);
+  --scrim: rgba(0, 0, 0, 0.4);
+
+  /* 强调色 */
+  --accent-500: #e8a33d;
+  --accent-400: #f0b35a;
+  --accent-600: #d68f2b;
+  --accent-on: #1c1c1e;
+  --accent-tint: rgba(232, 163, 61, 0.14);
+  --accent-disabled: rgba(232, 163, 61, 0.32);
+
+  /* 文本 */
+  --text-primary: #ffffff;
+  --text-preview: #e8e8ed;
+
+  /* 边框 */
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.12);
+  --hairline-focus: rgba(232, 163, 61, 0.7);
+
+  /* 语义色 */
+  --success: #32d74b;
+  --warning: #ffd60a;
+  --danger-text: #ff6969;
+  --danger-fill: #ff453a;
+
+  /* 材质 */
+  /* 透明度必须留够，否则会遮住底下的 NSVisualEffectView（评审 M3）。 */
+  --material-panel: rgba(28, 28, 30, 0.62);
+  --material-window: rgba(30, 30, 32, 0.74);
+  --material-menu: rgba(44, 44, 46, 0.85);
+  --material-modal: rgba(44, 44, 46, 0.95);
+
+  /* 圆角 */
+  --radius-window-panel: 12px;
+  --radius-window-main: 10px;
+
+  /* 动效 */
+  --ease-apple: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  --font-sf: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "PingFang SC", "Helvetica Neue", sans-serif;
+
+  font-family: var(--font-sf);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/*
+ * 浅色外观（清单 25）：结构色全部走上面的 CSS 变量，切 `:root.light` 即整套换肤。
+ * 取值对照 docs/UI-DESIGN.md 的浅色参考值（window #FFFFFF / group #F2F2F7 / hairline 10% 黑）。
+ */
+:root.light {
+  color-scheme: light;
+
+  --bg-window: #ffffff;
+  --bg-group: #f2f2f7;
+  --bg-raised: #ffffff;
+  --fill-input: rgba(0, 0, 0, 0.04);
+  --fill-hover: rgba(0, 0, 0, 0.06);
+  --fill-active: rgba(0, 0, 0, 0.09);
+  --fill-selected: rgba(0, 0, 0, 0.07);
+  --scrim: rgba(0, 0, 0, 0.28);
+
+  --accent-tint: rgba(232, 163, 61, 0.18);
+  --accent-disabled: rgba(232, 163, 61, 0.28);
+
+  --text-primary: #000000;
+  --text-preview: #1c1c1e;
+
+  --hairline: rgba(0, 0, 0, 0.08);
+  --hairline-strong: rgba(0, 0, 0, 0.12);
+  --hairline-focus: rgba(214, 143, 43, 0.75);
+
+  --success: #1f8a3b;
+  --warning: #9a6b00;
+  --danger-text: #d70015;
+  --danger-fill: #ff453a;
+
+  --material-panel: rgba(248, 248, 250, 0.70);
+  --material-window: rgba(250, 250, 252, 0.80);
+  --material-menu: rgba(250, 250, 250, 0.90);
+  --material-modal: rgba(250, 250, 250, 0.97);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/* 窗口为 transparent:true，底色统一由 .app-surface 承担 */
+body {
+  background: transparent;
+}
+
+@layer components {
+  /* ---------- 窗口 / 面板表面 ---------- */
+  .app-surface {
+    @apply h-full w-full overflow-hidden;
+    background: var(--bg-window);
+    border: 1px solid var(--hairline-strong);
+  }
+  .app-surface--panel {
+    border-radius: var(--radius-window-panel);
+    /* 真毛玻璃由窗口下的 NSVisualEffectView 提供（评审 M3）：
+       这里只叠一层淡色，`backdrop-filter` 在透明 WKWebView 里采不到桌面，
+       保留它反而会把上面的叠色再模糊一次，所以不再使用。 */
+    background: var(--material-panel);
+  }
+  .app-surface--window {
+    border-radius: var(--radius-window-main);
+    /* 管理窗口也透出桌面（浅色下是磨砂白），侧边栏再叠一层深色。 */
+    background: var(--material-window);
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .app-surface--panel,
+    .app-surface--window {
+      background: var(--bg-window);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+  }
+
+  /* ---------- 输入 / 搜索 / 下拉 ---------- */
+  .input {
+    @apply h-[28px] w-full rounded-md border border-white/[0.08] bg-white/[0.05] px-[10px]
+           text-[13px]/[18px] text-white outline-none placeholder:text-white/35
+           transition-[border-color,box-shadow] duration-120 ease-out-soft
+           focus:border-accent-500/70 focus:shadow-[0_0_0_3px_rgba(232,163,61,0.30)];
+  }
+
+  /* ---------- 按钮 ---------- */
+  /* 命中区域（评审 M11）：主按钮 30px / 小按钮 26px，均不低于 macOS HIG 的 24pt 舒适区。 */
+  .btn {
+    @apply inline-flex h-[30px] items-center justify-center gap-[6px] rounded-md px-[14px]
+           text-[13px]/[18px] font-medium outline-none
+           transition-[background-color,transform,box-shadow] duration-100 ease-apple
+           active:scale-[0.98] disabled:cursor-not-allowed
+           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+  }
+  .btn-primary {
+    @apply bg-accent-500 text-[#1C1C1E] hover:bg-accent-400 active:bg-accent-600
+           disabled:bg-accent-500/30 disabled:text-white/30 disabled:active:scale-100;
+  }
+  .btn-secondary {
+    @apply border border-white/10 bg-white/[0.06] text-[#F5F5F7]
+           hover:bg-white/[0.10] active:bg-white/[0.12];
+  }
+  .btn-danger {
+    @apply bg-danger-fill text-white hover:brightness-110;
+  }
+  .btn-ghost {
+    @apply text-white/60 hover:bg-white/[0.08] hover:text-white active:bg-white/[0.12];
+  }
+  .btn-sm {
+    @apply h-[26px] rounded-[5px] px-[10px] text-[12px]/[16px];
+  }
+  .btn-icon {
+    @apply grid h-[30px] w-[30px] shrink-0 place-items-center rounded-md text-white/55 outline-none
+           transition-[background-color,color,transform] duration-120 ease-out-soft
+           hover:bg-white/[0.08] hover:text-white
+           active:scale-[0.98] active:bg-white/[0.12]
+           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+  }
+  .btn-icon-danger {
+    @apply btn-icon hover:bg-danger-fill/10 hover:text-[#FF6969];
+  }
+
+  /* ---------- 分段控件 / pill / kbd ---------- */
+  .seg {
+    @apply inline-flex h-[28px] items-center gap-[2px] rounded-[7px] bg-white/[0.08] p-[2px];
+  }
+  .seg-item {
+    @apply inline-flex h-[24px] items-center rounded-[5px] px-[12px] text-[12px]/[16px]
+           text-white/60 outline-none transition-colors duration-120 ease-out-soft
+           hover:text-white/85
+           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+  }
+  .seg-item-active {
+    @apply bg-accent-500 font-medium text-[#1C1C1E] shadow-[0_1px_2px_rgba(0,0,0,0.3)];
+  }
+  .pill {
+    @apply inline-flex h-[24px] shrink-0 items-center rounded-full bg-white/[0.06]
+           px-[10px] text-[12px]/[16px] text-white/60 outline-none
+           transition-colors duration-120 ease-out-soft
+           hover:bg-white/[0.10] hover:text-white/85
+           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+  }
+  .pill-active {
+    @apply bg-accent-tint text-accent-tint-text ring-1 ring-accent-500/30;
+  }
+  .kbd {
+    @apply inline-flex h-[18px] min-w-[20px] items-center justify-center rounded-[4px]
+           bg-white/[0.08] px-[4px] text-[11px]/[14px] font-medium text-white/50;
+  }
+
+  /* ---------- 开关 ---------- */
+  .switch {
+    @apply relative h-[17px] w-[28px] shrink-0 rounded-full outline-none
+           transition-colors duration-150 ease-apple
+           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+  }
+  .switch-on {
+    @apply bg-accent-500;
+  }
+  .switch-off {
+    @apply bg-white/[0.16];
+  }
+  .switch-thumb {
+    @apply absolute left-[2px] top-[2px] h-[13px] w-[13px] rounded-full bg-white
+           shadow-[0_1px_2px_rgba(0,0,0,0.4)] transition-transform duration-150 ease-apple;
+  }
+  .switch-on .switch-thumb {
+    @apply translate-x-[11px];
+  }
+
+  /* ---------- 滑块 ---------- */
+  .slider {
+    @apply h-4 w-full cursor-pointer appearance-none bg-transparent outline-none;
+    accent-color: var(--accent-500);
+  }
+  .slider::-webkit-slider-runnable-track {
+    @apply h-[4px] rounded-full bg-white/10;
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    margin-top: -5.5px;
+    @apply h-[15px] w-[15px] rounded-full bg-white;
+    box-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.5),
+      0 0 0 0.5px rgba(0, 0, 0, 0.15);
+    transition: transform 100ms var(--ease-apple);
+  }
+  .slider:active::-webkit-slider-thumb {
+    transform: scale(1.12);
+  }
+  .slider:focus-visible {
+    border-radius: 9999px;
+    box-shadow: 0 0 0 3px rgba(232, 163, 61, 0.35);
+  }
+
+  /* ---------- 卡片 / 分组 / 菜单 ---------- */
+  .card-clip {
+    @apply flex w-[168px] shrink-0 flex-col overflow-hidden rounded-[10px] border
+           border-white/[0.08] bg-white/[0.055]
+           transition-[background-color,border-color,box-shadow] duration-150 ease-out-soft;
+  }
+  .card-clip:hover {
+    @apply bg-white/[0.08];
+  }
+  .card-clip-selected {
+    /* 选中态统一用品牌强调色（与按钮/开关/tab 同一套 accent，不再出现黄色描边） */
+    @apply border-accent-500 bg-accent-tint shadow-[0_0_0_1px_rgba(232,163,61,0.45)];
+  }
+  .card-clip-selected:hover {
+    @apply bg-accent-tint;
+  }
+  .card-group {
+    @apply rounded-[10px] bg-group p-[16px];
+  }
+  .menu {
+    /* overflow 保持 visible：标签子菜单（评审 U4）要飞出父级菜单边界。 */
+    @apply min-w-[200px] overflow-visible rounded-md border border-white/[0.12] p-[5px] shadow-menu;
+    background: var(--material-menu);
+    -webkit-backdrop-filter: blur(28px) saturate(1.5);
+    backdrop-filter: blur(28px) saturate(1.5);
+  }
+  /* 菜单项 28px（评审 M11 / U4）：24px 低于 HIG 舒适命中高度。 */
+  .menu-item {
+    @apply flex h-[28px] w-full items-center gap-[8px] rounded-[4px] px-[10px]
+           text-[13px]/[18px] text-white/85 transition-colors duration-75;
+  }
+  .menu-item:hover,
+  .menu-item-active {
+    @apply bg-accent-500 text-[#1C1C1E];
+  }
+  .menu-item-danger {
+    @apply text-[#FF6969];
+  }
+  .menu-item-danger:hover {
+    @apply bg-danger-fill text-white;
+  }
+  .menu-sep {
+    @apply mx-[4px] my-[4px] h-px bg-white/10;
+  }
+  /* 菜单项右侧快捷键标注（⌘C / ⌫ …），与左侧文案留出最小 24px 间距。 */
+  .menu-shortcut {
+    @apply ml-[24px] shrink-0 text-[12px]/[16px] tabular-nums text-white/40;
+  }
+  .menu-item:hover .menu-shortcut,
+  .menu-item-active .menu-shortcut {
+    @apply text-[#1C1C1E]/70;
+  }
+  /* 子菜单箭头：菜单项 hover 时同色反白。 */
+  .menu-arrow {
+    @apply ml-auto h-[10px] w-[10px] shrink-0 text-white/40;
+  }
+  .menu-item:hover .menu-arrow {
+    @apply text-[#1C1C1E];
+  }
+
+  /* ---------- 滚动条（overlay 近似） ---------- */
+  .scroll-apple {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  }
+  .scroll-apple::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-apple::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.22);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .scroll-apple::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.38);
+    background-clip: content-box;
+  }
+  .scroll-apple::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* 富文本预览：重置 HTML 剪贴板内容自带的段落/列表间距 */
+  .clip-rich-preview p,
+  .clip-rich-preview ul,
+  .clip-rich-preview ol {
+    margin: 0;
+  }
+}
+
+/* ================================================================== */
+/* Finder 环形盘动画（移植 Filee DonutMenu 时序，见                    */
+/* docs/REA-Filee-Ring-Integrated.md §4「圆环规则」）                  */
+/*                                                                    */
+/* 关键点：每个扇区绕**自己的径向中线**缩放，不是整环绕 Y 轴旋转；     */
+/* 中线角度通过内联变量 --ring-ax 传入，逐扇区的起动延迟由 JS 写成     */
+/* animation-delay（从 12 点顺时针展开）。                              */
+/* 没有翻面动画：运行态只有一面（§4）。                                  */
+/* ================================================================== */
+@keyframes ring-layer-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ring-sector-in {
+  /* 绕**圆心**缩放并带 6° 回正：Wheel §1.3「从中心缩放并带轻微旋转」。 */
+  from {
+    transform: rotate(-6deg) scale(0.18);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(0deg) scale(1);
+    opacity: 1;
+  }
+}
+
+/* 点选后扇区向中心收缩，随后才出现进度环（文档 §1.4 #2）。 */
+@keyframes ring-collapse {
+  from {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+}
+
+.ring-collapse {
+  animation: ring-collapse 280ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* 5s 交接：收缩并淡出，把长任务交给系统通知（Filee §1.4 #10）。 */
+@keyframes ring-handoff {
+  from {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(0.86);
+    opacity: 0;
+  }
+}
+
+.ring-layer-in {
+  animation: ring-layer-in 160ms ease-out both;
+}
+
+/* EaseOutBack 等效：轻微过冲后落定（Wheel §1.3：0.42s / 逐项 0.028s）。 */
+.ring-sector-in {
+  transform-box: view-box;
+  animation: ring-sector-in 420ms cubic-bezier(0.22, 1.36, 0.4, 1) both;
+}
+
+/* 关闭：单扇区 0.16s、逐项延迟 0.01s、EaseInCubic（Wheel §1.3）。 */
+@keyframes ring-sector-out {
+  from {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+}
+
+.ring-sector-out {
+  transform-box: view-box;
+  animation: ring-sector-out 160ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* 圆心一起收掉，否则扇区散尽后中间还贴着一块标题。 */
+@keyframes ring-center-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.ring-center-out {
+  animation: ring-center-out 120ms ease-in both;
+}
+
+.ring-handoff {
+  animation: ring-handoff 220ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 100ms !important;
+  }
+  .btn:active,
+  .switch-thumb {
+    transform: none !important;
+  }
+}
+
+/* ================================================================== */
+/* 浅色适配（清单 25）                                                */
+/*                                                                    */
+/* 组件层的结构色已改为 var()，切 :root.light 自动生效；但 JSX 里还有  */
+/* 大量为深色底写的 white/xx 透明度工具类，这里逐档映射为 black/xx。  */
+/* 用属性选择器（class~=）而不是转义类名，避免 / [ ] 的转义噪音。      */
+/* ================================================================== */
+
+/* 文本 */
+.light [class~="text-white"] { color: #1c1c1e; }
+.light [class~="text-white/90"] { color: rgba(0, 0, 0, 0.9); }
+.light [class~="text-white/85"] { color: rgba(0, 0, 0, 0.85); }
+.light [class~="text-white/70"] { color: rgba(0, 0, 0, 0.72); }
+.light [class~="text-white/60"] { color: rgba(0, 0, 0, 0.58); }
+.light [class~="text-white/45"] { color: rgba(0, 0, 0, 0.5); }
+.light [class~="text-white/40"] { color: rgba(0, 0, 0, 0.46); }
+.light [class~="text-white/35"] { color: rgba(0, 0, 0, 0.42); }
+.light [class~="text-white/30"] { color: rgba(0, 0, 0, 0.38); }
+.light [class~="text-white/[0.28]"] { color: rgba(0, 0, 0, 0.36); }
+/* 下面这六档是 JSX 里在用、但上面没列到的：不补就会在浅色下继续用白色。 */
+.light [class~="text-white/80"] { color: rgba(0, 0, 0, 0.78); }
+.light [class~="text-white/75"] { color: rgba(0, 0, 0, 0.72); }
+.light [class~="text-white/65"] { color: rgba(0, 0, 0, 0.64); }
+.light [class~="text-white/55"] { color: rgba(0, 0, 0, 0.56); }
+.light [class~="text-white/50"] { color: rgba(0, 0, 0, 0.52); }
+.light [class~="text-white/20"] { color: rgba(0, 0, 0, 0.3); }
+.light [class~="text-danger"] { color: var(--danger-text); }
+.light [class~="text-danger-soft"] { color: var(--danger-text); }
+.light [class~="text-success-soft"] { color: var(--success); }
+.light [class~="text-warning"] { color: var(--warning); }
+/* 强调色文字：亮琥珀在浅底上对比不足，换深一档（与 accent-700 同值）。 */
+.light [class~="text-accent"] { color: #b3741f; }
+
+/* 类型徽章：深色下是「14% 彩底 + 同系亮字」，浅底下亮字读不清，
+ * 底色保持淡彩、文字换同系深色（unknown 原本是 50% 白，浅底下直接消失）。 */
+.light [class~="text-badge-text-fg"] { color: #0a63c9; }
+.light [class~="text-badge-image-fg"] { color: #17722c; }
+.light [class~="text-badge-files-fg"] { color: #8a5816; }
+.light [class~="text-badge-html-fg"] { color: #8e34c4; }
+.light [class~="text-badge-unknown-fg"] { color: rgba(0, 0, 0, 0.5); }
+.light [class~="bg-badge-unknown"] { background-color: rgba(0, 0, 0, 0.07); }
+
+/* 背景填充 */
+.light [class~="bg-white/[0.02]"] { background-color: rgba(0, 0, 0, 0.02); }
+.light [class~="bg-white/[0.04]"] { background-color: rgba(0, 0, 0, 0.03); }
+.light [class~="bg-white/[0.05]"] { background-color: rgba(0, 0, 0, 0.035); }
+.light [class~="bg-white/[0.06]"] { background-color: rgba(0, 0, 0, 0.045); }
+.light [class~="bg-white/[0.07]"] { background-color: rgba(0, 0, 0, 0.05); }
+.light [class~="bg-white/[0.08]"] { background-color: rgba(0, 0, 0, 0.055); }
+.light [class~="bg-white/[0.10]"] { background-color: rgba(0, 0, 0, 0.07); }
+.light [class~="bg-white/[0.12]"] { background-color: rgba(0, 0, 0, 0.085); }
+.light [class~="bg-white/10"] { background-color: rgba(0, 0, 0, 0.07); }
+.light [class~="bg-white/25"] { background-color: rgba(0, 0, 0, 0.14); }
+.light [class~="bg-white/30"] { background-color: rgba(0, 0, 0, 0.18); }
+/* 语义色画布类（CardGroup / <option> 等直接用 bg-group）*/
+.light [class~="bg-group"] { background-color: var(--bg-group); }
+.light [class~="bg-raised"] { background-color: var(--bg-raised); }
+.light [class~="bg-win"] { background-color: var(--bg-window); }
+/* 管理窗口侧边栏：深色下是黑色叠加，浅色下换成淡灰 */
+.light [class~="bg-black/[0.15]"] { background-color: rgba(0, 0, 0, 0.035); }
+
+/* 描边 */
+.light [class~="border-white/[0.06]"] { border-color: rgba(0, 0, 0, 0.06); }
+.light [class~="border-white/[0.08]"] { border-color: rgba(0, 0, 0, 0.08); }
+.light [class~="border-white/[0.12]"] { border-color: rgba(0, 0, 0, 0.12); }
+.light [class~="border-white/[0.15]"] { border-color: rgba(0, 0, 0, 0.15); }
+.light [class~="border-white/12"] { border-color: rgba(0, 0, 0, 0.12); }
+.light [class~="border-white/15"] { border-color: rgba(0, 0, 0, 0.15); }
+.light [class~="border-white/25"] { border-color: rgba(0, 0, 0, 0.22); }
+.light [class~="border-white/40"] { border-color: rgba(0, 0, 0, 0.3); }
+
+/* 分隔线：divide-* 把颜色加在子元素上，不是容器自身。 */
+.light [class~="divide-white/[0.06]"] > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(0, 0, 0, 0.07);
+}
+
+/* 悬停态 */
+.light [class~="hover:bg-white/10"]:hover { background-color: rgba(0, 0, 0, 0.07); }
+.light [class~="hover:bg-white/[0.05]"]:hover { background-color: rgba(0, 0, 0, 0.04); }
+.light [class~="hover:bg-white/[0.12]"]:hover { background-color: rgba(0, 0, 0, 0.09); }
+.light [class~="hover:bg-white/[0.06]"]:hover { background-color: rgba(0, 0, 0, 0.05); }
+.light [class~="hover:bg-white/[0.07]"]:hover { background-color: rgba(0, 0, 0, 0.055); }
+.light [class~="hover:bg-white/[0.08]"]:hover { background-color: rgba(0, 0, 0, 0.06); }
+.light [class~="hover:bg-white/[0.10]"]:hover { background-color: rgba(0, 0, 0, 0.075); }
+.light [class~="hover:text-white"]:hover { color: #000000; }
+.light [class~="hover:text-white/60"]:hover { color: rgba(0, 0, 0, 0.6); }
+.light [class~="hover:text-white/85"]:hover { color: rgba(0, 0, 0, 0.85); }
+.light [class~="hover:text-white/90"]:hover { color: rgba(0, 0, 0, 0.9); }
+
+/* 例外：少数元素是「故意深底」（黑半透明画布），里面的白字 / 白边不能被上面这套映射翻黑，
+ * 用 on-dark 标记（特异性高于上面的单属性选择器，hover 态仍走 Tailwind 自己的规则）。 */
+.light [class~="on-dark"][class~="text-white"] { color: #ffffff; }
+.light [class~="on-dark"][class~="text-white/85"] { color: rgba(255, 255, 255, 0.85); }
+.light [class~="on-dark"][class~="border-white/25"] { border-color: rgba(255, 255, 255, 0.25); }
+
+/* 组件层：把 @apply 进去的 white/xx 固定值改回浅色语义 */
+.light .input {
+  border-color: var(--hairline);
+  background: var(--fill-input);
+  color: #1c1c1e;
+}
+.light .input::placeholder { color: rgba(0, 0, 0, 0.36); }
+
+.light .btn-secondary {
+  border-color: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.05);
+  color: #1c1c1e;
+}
+.light .btn-secondary:hover { background: rgba(0, 0, 0, 0.08); }
+.light .btn-secondary:active { background: rgba(0, 0, 0, 0.1); }
+.light .btn-ghost { color: rgba(0, 0, 0, 0.6); }
+.light .btn-ghost:hover { background: rgba(0, 0, 0, 0.06); color: #000000; }
+.light .btn-ghost:active { background: rgba(0, 0, 0, 0.09); }
+.light .btn-icon { color: rgba(0, 0, 0, 0.55); }
+.light .btn-icon:hover { background: rgba(0, 0, 0, 0.06); color: #000000; }
+.light .btn-icon:active { background: rgba(0, 0, 0, 0.09); }
+.light .btn-icon-danger:hover { color: #d70015; }
+.light .btn-primary:disabled { color: rgba(0, 0, 0, 0.3); }
+
+.light .seg { background: rgba(0, 0, 0, 0.06); }
+.light .seg-item { color: rgba(0, 0, 0, 0.6); }
+.light .seg-item:hover { color: rgba(0, 0, 0, 0.85); }
+.light .seg-item.seg-item-active { color: #1c1c1e; }
+.light .pill { background: rgba(0, 0, 0, 0.06); color: rgba(0, 0, 0, 0.6); }
+.light .pill:hover { background: rgba(0, 0, 0, 0.09); color: rgba(0, 0, 0, 0.85); }
+.light .pill-active { color: #8a5816; }
+.light .kbd { background: rgba(0, 0, 0, 0.06); color: rgba(0, 0, 0, 0.5); }
+.light .switch-off { background: rgba(0, 0, 0, 0.16); }
+
+.light .slider::-webkit-slider-runnable-track { background: rgba(0, 0, 0, 0.12); }
+
+.light .card-clip { border-color: rgba(0, 0, 0, 0.08); background: rgba(0, 0, 0, 0.04); }
+.light .card-clip:hover { background: rgba(0, 0, 0, 0.06); }
+.light .card-clip-selected,
+.light .card-clip-selected:hover {
+  border-color: var(--accent-500);
+  background: var(--accent-tint);
+}
+
+.light .menu { border-color: rgba(0, 0, 0, 0.12); }
+.light .menu-item { color: rgba(0, 0, 0, 0.85); }
+.light .menu-item:hover,
+.light .menu-item-active { color: #1c1c1e; }
+.light .menu-item-danger { color: #d70015; }
+.light .menu-sep { background: rgba(0, 0, 0, 0.1); }
+.light .menu-shortcut { color: rgba(0, 0, 0, 0.4); }
+.light .menu-item:hover .menu-shortcut,
+.light .menu-item-active .menu-shortcut { color: rgba(0, 0, 0, 0.62); }
+.light .menu-arrow { color: rgba(0, 0, 0, 0.4); }
+.light .menu-item:hover .menu-arrow { color: #1c1c1e; }
+
+.light .scroll-apple { scrollbar-color: rgba(0, 0, 0, 0.22) transparent; }
+.light .scroll-apple::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.22); }
+.light .scroll-apple::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.38); }

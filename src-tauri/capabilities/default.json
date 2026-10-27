@@ -1,0 +1,15 @@
+{
+  "$schema": "gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for ClipBase windows (main / panel / ring / picker)",
+  "windows": ["main", "panel", "ring", "picker"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-hide",
+    "core:event:default",
+    "core:app:default",
+    "core:menu:default",
+    "global-shortcut:default"
+  ]
+}

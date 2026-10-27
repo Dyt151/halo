@@ -1,0 +1,79 @@
+[package]
+name = "clipbase"
+version = "0.1.0"
+description = "ClipBase — an open-source, extensible clipboard manager"
+authors = ["ClipBase contributors"]
+edition = "2021"
+rust-version = "1.77"
+# 存在 src/main.rs 与 src/bin/clipbase_import.rs 两个二进制，显式指定主二进制，
+# 否则 tauri build 无法推断。
+default-run = "clipbase"
+
+[lib]
+name = "clipbase_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+# 单实例：剪贴板工具被启动两次会双份监控、双份写库（评审 S8）。
+tauri-plugin-single-instance = "2"
+# 窗口位置/尺寸持久化（评审 S9）。
+tauri-plugin-window-state = "2"
+# 真实毛玻璃：把 NSVisualEffectView 垫到 webview 之下（评审 M3）。
+window-vibrancy = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "process",
+    "io-util",
+] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite_migration = "1"
+arboard = "3"
+enigo = "0.2"
+reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+semver = { version = "1", features = ["serde"] }
+async-trait = "0.1"
+base64 = "0.22"
+# 格式转换：图片编解码（PNG/JPEG/GIF/WebP/BMP/TIFF 互转）。
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+    "tiff",
+] }
+# 格式转换：Markdown → HTML。
+pulldown-cmark = "0.12"
+# 快捷回复：Excel 导出（xlsx 写入）。
+rust_xlsxwriter = "0.9"
+# 快捷回复：Excel 导入（xlsx 读取）。
+calamine = "0.31"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-app-kit = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
