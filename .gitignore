@@ -21,3 +21,6 @@ Icon?
 .idea/
 *.swp
 *.swo
+
+# --- WorkBuddy 本地工作数据 ---
+.workbuddy/
