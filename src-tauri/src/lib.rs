@@ -35,7 +35,7 @@ use tauri_plugin_global_shortcut::{Shortcut, ShortcutEvent, ShortcutState};
 use crate::core::clipboard::types::ClipEvent;
 use crate::core::{
     resolve_action, ClipboardMonitor, ClipboardStack, HistoryService, HotkeyAction, HotkeyManager,
-    PasteService, ReplyService, SensitivityDetector,
+    PasteService, SensitivityDetector,
 };
 use crate::modules::{CapabilityGate, MessageBus, ModuleHost};
 use crate::state::AppState;
@@ -55,8 +55,6 @@ fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
             window::remember_frontmost_app();
             let _ = state.paste_stack_top();
         }
-        // 快捷回复现场入口：独立选择器浮动面板，不经过主窗口（评审 A1 / 任务 7）。
-        Some(HotkeyAction::ReplyPicker) => window::show_reply_picker(app),
         None => {}
     }
 }
@@ -93,7 +91,6 @@ pub fn run() {
     let sync = SyncManager::new(db.clone(), history.clone(), config.clone());
     let monitor = ClipboardMonitor::new();
     let paste = PasteService::new(history.clone(), config.clone(), monitor.clone());
-    let reply = ReplyService::new(db.clone());
     let sensitivity = SensitivityDetector::new();
 
     tauri::Builder::default()
@@ -103,7 +100,17 @@ pub fn run() {
             crate::window::show_main_window(app);
         }))
         // 窗口位置/尺寸持久化（评审 S9）。
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 不恢复可见性：菜单栏应用退出时面板/管理窗口可能正开着，
+        // 若把 visible 一起存回来，下次启动会直接弹窗（面板还会绕过
+        // show_panel_window 的定位与宿主逻辑，无法键入）。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(handle_shortcut)
@@ -144,18 +151,6 @@ pub fn run() {
             commands::stack_clear,
             commands::stack_set_lock,
             commands::stack_locked,
-            commands::list_reply_groups,
-            commands::add_reply_group,
-            commands::rename_reply_group,
-            commands::delete_reply_group,
-            commands::list_replies,
-            commands::add_reply,
-            commands::update_reply,
-            commands::delete_reply,
-            commands::move_reply,
-            commands::reply_paste,
-            commands::export_replies_xlsx,
-            commands::import_replies_xlsx,
             commands::sync_now,
             commands::get_sync_status,
             commands::test_sync,
@@ -183,12 +178,13 @@ pub fn run() {
             commands::ring_dismiss,
             commands::ring_gesture_status,
             commands::ring_gesture_repair,
-            commands::close_reply_picker,
             commands::login_item_status,
             commands::set_login_item,
             commands::app_info,
             commands::hide_panel,
             commands::quit_app,
+            commands::export_data,
+            commands::import_data,
         ])
         .setup(move |app| {
             // Dock 里不留图标。Info.plist 里的 LSUIElement 只对 LaunchServices 的
@@ -221,7 +217,6 @@ pub fn run() {
                 paste: paste.clone(),
                 hotkey: hotkey.clone(),
                 stack: stack.clone(),
-                reply: reply.clone(),
                 modules: modules.clone(),
                 sync: sync.clone(),
                 sensitivity: sensitivity.clone(),
@@ -300,11 +295,20 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 crate::window::apply_material(&main, window::window_material(), 10.0);
             }
-            // 环形盘不垫材质：窗口里只该有扇区本身，垫了会多出一块灰色圆角底板。
-            // 回复选择器是卡片式 HUD，仍用面板同款材质 + 圆角（评审 M3/M6）。
-            if let Some(picker) = app.get_webview_window("picker") {
-                crate::window::apply_material(&picker, window::panel_material(), 12.0);
+            // 面板要能出现在别的 App 全屏 Space 上：普通 NSWindow 进不去，
+            // 给它配一个真实的 NSPanel 宿主当 Space 锚点（见 window.rs）。
+            if let Some(panel) = app.get_webview_window("panel") {
+                crate::window::prepare_panel_host(&panel);
             }
+            // 面板/环形盘要在别的 App 全屏时也能显示：补上 Tauri 没设的
+            // FullScreenAuxiliary（否则只出现在桌面 Space）。
+            if let Some(panel) = app.get_webview_window("panel") {
+                crate::window::allow_over_fullscreen(&panel);
+            }
+            if let Some(ring) = app.get_webview_window("ring") {
+                crate::window::allow_over_fullscreen(&ring);
+            }
+            // 环形盘不垫材质：窗口里只该有扇区本身，垫了会多出一块灰色圆角底板。
 
             // 不再创建菜单栏图标：ClipBase 是纯后台常驻应用，入口只有全局快捷键
             // 唤出的面板，设置从面板右上角的齿轮进入（评审 E12）。
@@ -339,10 +343,6 @@ pub fn run() {
                 // 环形盘失焦即取消（点外部/切走，任务 22）；转换中不作废已提交任务。
                 tauri::WindowEvent::Focused(false) if label == "ring" => {
                     crate::core::ring::RingManager::cancel();
-                }
-                // 回复选择器失焦即收起（回贴目标 App 已拿到焦点，任务 7/8）。
-                tauri::WindowEvent::Focused(false) if label == "picker" => {
-                    window::hide_reply_picker(window.app_handle());
                 }
                 _ => {}
             }

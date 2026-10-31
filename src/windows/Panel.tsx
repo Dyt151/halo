@@ -4,7 +4,8 @@
  * 严格按 docs/UI-DESIGN.md §9.1：工具栏 44px / 标签行 34px / 卡片流 flex-1 / 状态栏 36px，
  * 外框 12px 圆角 + 毛玻璃材质，出现 200ms / 收起 140ms 动画（评审 E2 / U9）。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useClipStore } from "../store/useClipStore";
 import { useClipActions } from "../hooks/useClipActions";
 import { onPanelShown, openMainWindow } from "../lib/windows";
@@ -132,6 +133,14 @@ export default function Panel() {
     searchRef.current?.focus();
     searchRef.current?.select();
   };
+
+  // 根节点 `key={shownKey}` 会整棵重挂载来重放出现动画，`handleShown` 里同步调的
+  // `focus()` 落在即将被丢弃的旧 input 上——结果每次唤出搜索框都没焦点，
+  // 打字不进搜索、方向键被当成列表导航。重挂载提交后再聚焦，才是真正生效的那一次。
+  useLayoutEffect(() => {
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  }, [shownKey]);
 
   useEffect(() => {
     let disposed = false;
@@ -309,6 +318,23 @@ export default function Panel() {
     selected,
     toggleFavorite,
   ]);
+
+  // 后端发起的粘贴（面板开着时按堆栈快捷键等）不经过上面各条 promise 路径：
+  // 订阅后端事件补一次收起，closePanel 幂等，两条路径都触发也只播一遍动画。
+  useEffect(() => {
+    let disposed = false;
+    let unsub: (() => void) | undefined;
+    void listen("clipboard://paste-finished", () => {
+      if (autoCloseAfterPaste) void closePanel();
+    }).then((fn) => {
+      if (disposed) fn();
+      else unsub = fn;
+    });
+    return () => {
+      disposed = true;
+      unsub?.();
+    };
+  }, [autoCloseAfterPaste, closePanel]);
 
   const emptyIcon = (
     <svg

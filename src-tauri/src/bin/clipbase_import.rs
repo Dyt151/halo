@@ -1,4 +1,4 @@
-//! 命令行导入工具：把 JSON 格式的历史 / 回复导入 ClipBase 数据库。
+//! 命令行导入工具：把 JSON 格式的历史导入 ClipBase 数据库。
 //!
 //! 用法：
 //!     cargo run --bin clipbase_import -- <import.json> [--replace] [--fix-image-sizes] [--db <path>]
@@ -16,7 +16,6 @@ use std::sync::{Arc, Mutex};
 
 use clipbase_lib::config::ConfigService;
 use clipbase_lib::core::history::HistoryService;
-use clipbase_lib::core::reply::ReplyService;
 use clipbase_lib::import;
 use clipbase_lib::storage;
 
@@ -52,7 +51,6 @@ fn main() {
     let db = Arc::new(Mutex::new(conn));
     let config = ConfigService::new(db.clone());
     let history = HistoryService::new(db.clone(), config.clone());
-    let reply = ReplyService::new(db);
     if fix_image_sizes {
         match history.backfill_image_sizes() {
             Ok((fixed_sizes, fixed_dims)) => {
@@ -74,14 +72,12 @@ fn main() {
     // 导入的条目与正常捕获走同一套敏感策略（否则迁移进来的密码会明文入库、
     // 并被当成非敏感条同步到云端）。
     let policy = config.get().sensitivity;
-    match import::import_from_file(&path, &history, &reply, replace, policy) {
+    match import::import_from_file(&path, &history, replace, policy) {
         Ok(summary) => {
             println!(
-                "导入完成：历史新增 {} 条，合并 {} 条，回复 {} 条（新建分组 {} 个），跳过 {} 条{}",
+                "导入完成：历史新增 {} 条，合并 {} 条，跳过 {} 条{}",
                 summary.clips,
                 summary.merged,
-                summary.replies,
-                summary.groups,
                 summary.skipped,
                 if replace { "（--replace 模式：按时间原位更新）" } else { "" },
             );

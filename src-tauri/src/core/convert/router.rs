@@ -188,6 +188,7 @@ pub fn reachable_targets(from: ConvertFormat) -> Vec<ConvertFormat> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::format::SIPS_FORMATS;
     use ConvertFormat::*;
 
     #[test]
@@ -196,7 +197,7 @@ mod tests {
         assert_eq!(route.steps.len(), 1);
         assert_eq!(route.steps[0].engine, EngineId::Image);
 
-        let route = plan(Md, Html, false).expect("md -> html");
+        let route = plan(Txt, Html, false).expect("txt -> html");
         assert_eq!(route.steps.len(), 1);
         assert_eq!(route.steps[0].engine, EngineId::Text);
     }
@@ -235,14 +236,14 @@ mod tests {
         assert_eq!(route.steps.len(), 1);
         assert_eq!(route.steps[0].engine, EngineId::Image);
         // 文本引擎没有 self edge，即使允许也不成立。
-        assert_eq!(plan(Md, Md, true), Err(NoRoute::SameFormat));
+        assert_eq!(plan(Txt, Txt, true), Err(NoRoute::SameFormat));
     }
 
     /// 缺的两条边必须明确不可达，而不是被悄悄绕过去。
     #[test]
     fn missing_edges_are_explicit() {
         assert_eq!(plan(Txt, Png, false), Err(NoRoute::NoEdge));
-        assert_eq!(plan(Md, Jpg, false), Err(NoRoute::NoEdge));
+        assert_eq!(plan(Html, Jpg, false), Err(NoRoute::NoEdge));
         assert!(!has_route(Png, Txt), "图片 → TXT 需要 OCR");
         assert_eq!(plan(Png, Txt, false), Err(NoRoute::NoEdge));
     }
@@ -250,13 +251,39 @@ mod tests {
     #[test]
     fn reachable_targets_cover_same_quadrant_and_documents() {
         let image_targets = reachable_targets(Png);
-        // 5 张别的图片 + md/html + 自己（self edge）。
-        assert_eq!(image_targets.len(), 8);
+        // 其余 5 张编解码图片 + HEIC + html + PDF + 自己（self edge）。
+        assert_eq!(image_targets.len(), 9);
         assert!(image_targets.contains(&Png));
-        assert!(!image_targets.contains(&Txt));
+        assert!(image_targets.contains(&Pdf), "图片可以嵌入单页 PDF");
+        assert!(!image_targets.contains(&Txt), "图片 → TXT 需要 OCR");
 
         let text_targets = reachable_targets(Txt);
-        assert_eq!(text_targets, vec![Md, Html]);
+        // 文本互转 + PDF 排版 + DOCX（textutil）；PDF 是终点，
+        // 不会再被 pdf→图片 接走。
+        assert_eq!(text_targets, vec![Html, Pdf, Docx]);
+    }
+
+    /// HEIC 借 PNG 桥可到全部图片目标（≤2 步），到不了文本。
+    #[test]
+    fn sips_formats_route_via_png_bridge() {
+        for from in SIPS_FORMATS {
+            for to in [Png, Jpg, Webp, Gif, Bmp, Tiff, Heic] {
+                let route = plan(from, to, true)
+                    .unwrap_or_else(|e| panic!("{from:?} → {to:?} 应有路由：{e:?}"));
+                assert!(
+                    route.steps.len() <= MAX_STEPS,
+                    "{from:?} → {to:?} 用了 {} 步",
+                    route.steps.len()
+                );
+            }
+            assert_eq!(plan(from, Txt, false), Err(NoRoute::NoEdge));
+        }
+        // 常规格式之间由 image 引擎直连（单步）。
+        let route = plan(Bmp, Tiff, false).expect("bmp -> tiff");
+        assert_eq!(route.steps.len(), 1);
+        assert_eq!(route.steps[0].engine, EngineId::Image);
+        let route = plan(Webp, Gif, false).expect("webp -> gif");
+        assert_eq!(route.steps.len(), 1);
     }
 
     /// 任何格式都不应该需要 4 步以上（预算足够时路由链很短）。

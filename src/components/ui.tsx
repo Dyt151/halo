@@ -135,6 +135,9 @@ export function Segment<T extends string = string>({
     else if (e.key === "End") next = last;
     if (next < 0) return;
     e.preventDefault();
+    // 阻止冒泡：面板在 window 上也监听方向键做卡片导航，
+    // 不拦住的话「在分段上按方向键」会同时切换筛选并移动卡片选中项。
+    e.stopPropagation();
     onChange(items[next].value);
     refs.current[next]?.focus();
   };

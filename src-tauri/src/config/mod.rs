@@ -10,6 +10,128 @@ use rusqlite::OptionalExtension;
 use settings::Config;
 
 const CONFIG_KEY: &str = "app_config";
+const MIGRATION_MARKER_KEY: &str = "migrated_v6_defaults";
+/// v7：格式裁剪后刷新出厂盘的扩展名（补 heic，去掉 md/doc/odt/rtf/mhtml）。
+const RING_FORMATS_MARKER_KEY: &str = "migrated_v7_ring_formats";
+
+/// 丢掉指向已删除格式的预设（ico / qoi / md / odt …）。
+///
+/// `TargetSpec` 对未知格式直接反序列化失败，整份 `Config` 就会解析失败，
+/// `ConfigService::new` 随即回落到默认值——用户的快捷键、容量、盘序全被重置。
+/// 所以在 `from_value` 之前先按 JSON 过滤：只放弃那条失效预设，其余配置保住。
+fn sanitize_removed_presets(value: &mut serde_json::Value) {
+    use crate::core::convert::ConvertFormat;
+
+    let Some(presets) = value
+        .get_mut("conversion")
+        .and_then(|c| c.get_mut("presets"))
+        .and_then(|p| p.as_array_mut())
+    else {
+        return;
+    };
+    presets.retain(|preset| {
+        let target_ok = match preset.get("target").and_then(|t| t.as_str()) {
+            Some("*") | None => true,
+            Some(raw) => ConvertFormat::from_ext(raw).is_some(),
+        };
+        let pages_ok = preset
+            .get("kind")
+            .and_then(|k| k.get("pdf_pages"))
+            .and_then(|p| p.get("to"))
+            .and_then(|t| t.as_str())
+            .map(|to| ConvertFormat::from_ext(to).is_some())
+            .unwrap_or(true);
+        target_ok && pages_ok
+    });
+}
+
+/// v6 一次性默认值迁移：旧默认「唤起面板 Control+C」「敏感策略 ignore」改成新默认
+/// （Control+Option+C / flag）。只在标记键不存在时执行一次——`Config::migrate()`
+/// 每次加载都跑，这种会覆盖用户有意选择的重写不能放进去。迁移过就写标记键，
+/// 用户之后自己改回 ⌃C / ignore 也原样保留。
+///
+/// v7 一次性刷写出厂盘的扩展名表：旧配置的「图片」盘可能是在 heic 加入之前
+/// 建的，扩展名里没有 `heic`，拖 HEIC 会掉进兜底盘、找不到 HEIC 动作；同时
+/// 清掉已删除格式（md / doc / odt / rtf / mhtml）的残留。只动四个出厂 id，
+/// 自建盘保持原样。
+fn migrate_user_defaults(
+    conn: &rusqlite::Connection,
+    config: &mut Config,
+) -> Result<bool, rusqlite::Error> {
+    let mut changed = false;
+
+    if !marker_set(conn, MIGRATION_MARKER_KEY)? {
+        if config.hotkeys.toggle == "Control+C" {
+            config.hotkeys.toggle = settings::default_toggle_hotkey();
+            changed = true;
+        }
+        if config.sensitivity == settings::SensitivityPolicy::Ignore {
+            config.sensitivity = settings::SensitivityPolicy::Flag;
+            changed = true;
+        }
+        if changed {
+            persist_config(conn, config)?;
+        }
+        set_marker(conn, MIGRATION_MARKER_KEY)?;
+    }
+
+    if !marker_set(conn, RING_FORMATS_MARKER_KEY)? {
+        let mut refreshed = false;
+        for profile in &mut config.ring.profiles {
+            if let Some(stock) = settings::stock_extensions(&profile.id) {
+                if profile.extensions != stock {
+                    profile.extensions = stock;
+                    refreshed = true;
+                }
+            }
+        }
+        if refreshed {
+            persist_config(conn, config)?;
+            changed = true;
+        }
+        set_marker(conn, RING_FORMATS_MARKER_KEY)?;
+    }
+
+    Ok(changed)
+}
+
+/// 一次性迁移标记键是否存在。
+fn marker_set(conn: &rusqlite::Connection, key: &str) -> Result<bool, rusqlite::Error> {
+    Ok(conn
+        .query_row("SELECT value FROM config WHERE key = ?1", [key], |r| {
+            r.get::<_, String>(0)
+        })
+        .optional()?
+        .is_some())
+}
+
+fn set_marker(conn: &rusqlite::Connection, key: &str) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO config (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![key, "1"],
+    )?;
+    Ok(())
+}
+
+fn persist_config(conn: &rusqlite::Connection, config: &Config) -> Result<(), rusqlite::Error> {
+    let json = serde_json::to_string(config).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "serialize migrated config",
+            )),
+        )
+    })?;
+    conn.execute(
+        "INSERT INTO config (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![CONFIG_KEY, json],
+    )?;
+    Ok(())
+}
 
 /// 配置服务。内部以读写锁缓存当前配置，写操作同时落库。
 #[derive(Clone)]
@@ -56,7 +178,18 @@ impl ConfigService {
             .optional()?;
         match row {
             Some(json) => {
-                let mut config: Config = serde_json::from_str(&json).map_err(|_| {
+                let mut value: serde_json::Value = serde_json::from_str(&json).map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid config json",
+                        )),
+                    )
+                })?;
+                sanitize_removed_presets(&mut value);
+                let mut config: Config = serde_json::from_value(value).map_err(|_| {
                     rusqlite::Error::FromSqlConversionFailure(
                         0,
                         rusqlite::types::Type::Text,
@@ -69,6 +202,7 @@ impl ConfigService {
                 // 旧版配置（环形动作存的是格式名、JPG 质量是全局字段）在这里
                 // 一次性升级到预设模型，保证后面的代码只需认识 preset id。
                 config.migrate();
+                migrate_user_defaults(&conn, &mut config)?;
                 Ok(config)
             }
             // 首次启动没有配置文件：默认值也要过一遍迁移，否则 `ring.profiles`
@@ -128,8 +262,11 @@ impl ConfigService {
                 }
             }
         }
-        let config: Config = serde_json::from_value(merged)
-            .map_err(|e| AppError::with_details(5001, "配置项不合法", e.to_string()))?;
+        let config: Config = {
+            sanitize_removed_presets(&mut merged);
+            serde_json::from_value(merged)
+                .map_err(|e| AppError::with_details(5001, "配置项不合法", e.to_string()))?
+        };
         self.save_inner(config)
     }
 
@@ -139,5 +276,68 @@ impl ConfigService {
         let mut cfg = self.get();
         cfg.sync = sync;
         self.save_inner(cfg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn memory_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("memory db");
+        conn.execute_batch("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .expect("create config table");
+        conn
+    }
+
+    fn profile<'a>(config: &'a mut Config, id: &str) -> &'a mut settings::RingProfile {
+        config
+            .ring
+            .profiles
+            .iter_mut()
+            .find(|p| p.id == id)
+            .unwrap_or_else(|| panic!("缺少 {id} 盘"))
+    }
+
+    /// v7 只刷出厂盘、只跑一次：第二次不会把用户后来改的扩展名覆盖回去。
+    #[test]
+    fn v7_refreshes_stock_extensions_once() {
+        let conn = memory_db();
+        let mut config = Config::default();
+        config.migrate();
+        // 旧盘：图片缺 heic，文本残留 md。
+        profile(&mut config, "images").extensions = vec!["png".into(), "jpg".into()];
+        profile(&mut config, "text").extensions = vec!["md".into(), "txt".into()];
+        // 自建盘不动。
+        config.ring.profiles.push(settings::RingProfile {
+            id: "profile-mine".into(),
+            name: "自建".into(),
+            extensions: vec!["sketch".into()],
+            kind: settings::RingProfileKind::Normal,
+            preset_ids: vec!["img.jpg".into()],
+            back_ids: Vec::new(),
+        });
+
+        assert!(migrate_user_defaults(&conn, &mut config).expect("v7 迁移"));
+        assert_eq!(
+            profile(&mut config, "images").extensions,
+            settings::stock_extensions("images").expect("出厂表")
+        );
+        assert_eq!(
+            profile(&mut config, "text").extensions,
+            settings::stock_extensions("text").expect("出厂表")
+        );
+        assert_eq!(
+            profile(&mut config, "profile-mine").extensions,
+            vec!["sketch".to_string()]
+        );
+
+        // 用户之后自己改：标记已写，迁移不再覆盖。
+        profile(&mut config, "images").extensions = vec!["png".into()];
+        assert!(!migrate_user_defaults(&conn, &mut config).expect("第二次迁移"));
+        assert_eq!(
+            profile(&mut config, "images").extensions,
+            vec!["png".to_string()]
+        );
     }
 }

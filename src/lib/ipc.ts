@@ -8,14 +8,13 @@ import type {
   Config,
   ContributionEntry,
   ConversionJob,
+  ExportResult,
+  ImportResult,
   HistoryQuery,
   HistoryStats,
-  ImportSummary,
   ModuleManifest,
   ModuleRecord,
   PasteOutcome,
-  Reply,
-  ReplyGroup,
   RingSnapshot,
   GestureStatus,
   AxRepair,
@@ -47,7 +46,7 @@ export interface HotkeyCheck {
 
 /** 单个快捷键槽位的真实注册结果（对应 Rust `HotkeySlotResult`）。 */
 export interface HotkeySlotResult {
-  /** 全局槽位之一：`toggle` / `stack_paste` / `reply_picker`。 */
+  /** 全局槽位之一：`toggle` / `stack_paste`。 */
   slot: string;
   accelerator: string;
   ok: boolean;
@@ -147,6 +146,20 @@ export const api = {
   /** 退出 App（菜单栏图标已取消，退出入口在设置 → 关于）。 */
   quitApp: () => invoke<void>("quit_app"),
 
+  // ---------- 本地备份 / 迁移 ----------
+  /**
+   * 导出整库为可迁移包（目录，含 backup.json + 可选 files/）。
+   * `includeFiles` 默认 true：把图片一并复制进包，迁移到新机后用得上。
+   */
+  exportData: (destDir: string, includeFiles = true) =>
+    invoke<ExportResult>("export_data", { destDir, includeFiles }),
+  /**
+   * 从导出包恢复历史（可选恢复配置）。`path` 为包目录或包内 backup.json。
+   * 导入是幂等的（按 hash 去重），可重复跑补齐遗漏。
+   */
+  importData: (path: string, restoreConfig = false) =>
+    invoke<ImportResult>("import_data", { path, restoreConfig }),
+
   listModules: () => invoke<ModuleRecord[]>("list_modules"),
   installModule: (path: string) => invoke<ModuleManifest>("install_module", { path }),
   uninstallModule: (id: string) => invoke<void>("uninstall_module", { id }),
@@ -157,30 +170,6 @@ export const api = {
     invoke<unknown>("invoke_module", { id, method, params }),
   listModuleContributions: () => invoke<ContributionEntry[]>("list_module_contributions"),
   readModuleUi: (id: string) => invoke<string>("read_module_ui", { id }),
-
-  // ---------- 快捷回复 ----------
-  listReplyGroups: () => invoke<ReplyGroup[]>("list_reply_groups"),
-  addReplyGroup: (name: string) => invoke<ReplyGroup>("add_reply_group", { name }),
-  renameReplyGroup: (id: number, name: string) =>
-    invoke<void>("rename_reply_group", { id, name }),
-  deleteReplyGroup: (id: number) => invoke<void>("delete_reply_group", { id }),
-  // 注意：Tauri 2 命令参数在 JS 侧是 camelCase（Rust `group_id` → `groupId`），
-  // 写成 `group_id` 时后端读不到值：`add_reply` 会直接报缺参，`list_replies`
-  // 则静默忽略分组筛选。
-  listReplies: (groupId: number | null, keyword: string | null) =>
-    invoke<Reply[]>("list_replies", { groupId, keyword }),
-  addReply: (groupId: number, title: string, content: string, files: string[]) =>
-    invoke<Reply>("add_reply", { groupId, title, content, files }),
-  updateReply: (id: number, title: string, content: string, files: string[]) =>
-    invoke<void>("update_reply", { id, title, content, files }),
-  deleteReply: (id: number) => invoke<void>("delete_reply", { id }),
-  moveReply: (id: number, direction: number) =>
-    invoke<void>("move_reply", { id, direction }),
-  replyPaste: (id: number) => invoke<PasteOutcome>("reply_paste", { id }),
-  exportRepliesXlsx: (groupId: number | null) =>
-    invoke<string>("export_replies_xlsx", { groupId }),
-  importRepliesXlsx: (path: string) =>
-    invoke<ImportSummary>("import_replies_xlsx", { path }),
 
   // ---------- Finder 扩展 ----------
   finderIntegrationStatus: () =>
@@ -209,8 +198,4 @@ export const api = {
   ringCancel: () => invoke<void>("ring_cancel"),
   /** 结果动画播完后收起环形盘（原地成功/失败反馈结束）。 */
   ringDismiss: () => invoke<void>("ring_dismiss"),
-
-  // ---------- 快捷回复选择器 ----------
-  /** 选择器回贴后主动收起（不经过失焦路径）。 */
-  closeReplyPicker: () => invoke<void>("close_reply_picker"),
 };

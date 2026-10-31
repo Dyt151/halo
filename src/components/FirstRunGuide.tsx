@@ -25,7 +25,7 @@ function seen(): boolean {
 }
 
 export default function FirstRunGuide({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const toggleHotkey = useClipStore((s) => s.config?.hotkeys.toggle) ?? "Control+C";
+  const toggleHotkey = useClipStore((s) => s.config?.hotkeys.toggle) ?? "Control+Option+C";
   const [visible, setVisible] = useState(() => !seen());
 
   const dismiss = () => {

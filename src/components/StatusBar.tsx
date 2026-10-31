@@ -75,11 +75,11 @@ export default function StatusBar() {
       )}
 
       <span className="ml-auto shrink-0">{syncText}</span>
-      {/* 同步状态与快捷键之间加分隔：避免让人以为 ⌃C 是同步开关。 */}
+      {/* 同步状态与快捷键之间加分隔：避免让人以为快捷键是同步开关。 */}
       <span className="h-[12px] w-px shrink-0 bg-white/[0.12]" aria-hidden />
       <span className="flex shrink-0 items-center gap-[6px] whitespace-nowrap" title="唤起面板的全局快捷键">
         <span className="text-white/40">面板</span>
-        <Kbd>{config?.hotkeys.toggle ?? "Control+C"}</Kbd>
+        <Kbd>{config?.hotkeys.toggle ?? "Control+Option+C"}</Kbd>
       </span>
     </footer>
   );

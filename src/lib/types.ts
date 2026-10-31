@@ -7,7 +7,7 @@ export type BoardPosition = "follow_cursor" | "screen" | "bottom";
 
 export type SyncState = "local" | "synced" | "dirty";
 
-export type SensitivityPolicy = "ignore" | "mask" | "encrypt";
+export type SensitivityPolicy = "flag" | "ignore" | "mask" | "encrypt";
 
 export type SyncProviderKind = "webdav" | "s3";
 
@@ -90,32 +90,6 @@ export interface HistoryStats {
   favorite: number;
 }
 
-/** 快捷回复分组。 */
-export interface ReplyGroup {
-  id: number;
-  name: string;
-  sort: number;
-}
-
-/** 快捷回复模板（`files` 为附件文件绝对路径列表）。 */
-export interface Reply {
-  id: number;
-  group_id: number;
-  title: string;
-  content: string;
-  files: string[];
-  sort: number;
-  /** 创建时间（毫秒时间戳）。 */
-  created_at: number;
-}
-
-/** Excel 导入汇总（对应 Rust `ImportSummary`）。 */
-export interface ImportSummary {
-  imported: number;
-  groups_created: number;
-  errors: string[];
-}
-
 export interface SyncCredentials {
   url: string;
   username: string;
@@ -135,8 +109,6 @@ export interface SyncConfig {
 export interface HotkeyConfig {
   toggle: string;
   stack_paste: string;
-  /** 唤起快捷回复选择器（现场回贴，不经过主窗口）。 */
-  reply_picker: string;
 }
 
 /** Profile 类型：决定选盘优先级（与 Rust `RingProfileKind` 对齐）。 */
@@ -156,8 +128,13 @@ export interface RingProfile {
   /** 归属本 Profile 的扩展名（小写、不带点）；空 + 兜底 = catch-all。 */
   extensions: string[];
   kind: RingProfileKind;
-  /** 唯一一面的预设顺序：索引 0 在 12 点，顺时针，最多 12 条。 */
+  /** 预设顺序：索引 0 在 12 点，顺时针，最多 16 条（不含工具动作）。 */
   preset_ids: string[];
+  /**
+   * 【已废弃】旧版背面预设顺序：背面已取消，Rust 迁移会并入 `preset_ids`
+   * 并清空。保留字段只为旧配置能反序列化，前端不再读写。
+   */
+  back_ids?: string[];
 }
 
 /** 环形转换配置（`设置 → 环形转换`，与 Rust `RingConfig` 对齐）。 */
@@ -166,6 +143,8 @@ export interface RingConfig {
   profiles: RingProfile[];
   /** Finder 里 Option + 拖动文件唤起环形盘（仅 macOS，只在前台是 Finder 时生效）。 */
   option_tap: boolean;
+  /** 每张盘末尾是否追加打包 / 解压 / PDF 分页等工具动作。 */
+  utility_actions: boolean;
   /** 按类别记住的最后动作（[类别, 预设 id]），只用于初始高亮。 */
   last_action: [string, string][];
 }
@@ -209,7 +188,7 @@ export interface RingSnapshot {
   hint: string | null;
   /** 本批文件选中的 Profile；没有 Profile 时为 null。 */
   profile: RingProfileInfo | null;
-  /** 唯一一面的扇区（位置固定，禁用项也在这里）。 */
+  /** 当前显示的扇区（位置固定，禁用项也在这里）。 */
   actions: RingAction[];
   /** 按类别记住的最后动作：仅用于预高亮，不自动执行。 */
   suggested: string | null;
@@ -367,9 +346,11 @@ export type ConvertFormat =
   | "gif"
   | "bmp"
   | "tiff"
-  | "md"
+  | "heic"
   | "html"
-  | "txt";
+  | "txt"
+  | "pdf"
+  | "docx";
 
 export const CONVERT_FORMAT_LABELS: Record<ConvertFormat, string> = {
   png: "PNG 图片",
@@ -378,9 +359,11 @@ export const CONVERT_FORMAT_LABELS: Record<ConvertFormat, string> = {
   gif: "GIF 图片",
   bmp: "BMP 图片",
   tiff: "TIFF 图片",
-  md: "Markdown",
+  heic: "HEIC 图片",
   html: "HTML",
   txt: "纯文本",
+  pdf: "PDF",
+  docx: "Word",
 };
 
 /** 目标规格：显式格式，或 `"*"` = 与源格式相同（Rust `TargetSpec`）。 */
@@ -408,6 +391,20 @@ export interface OutputRule {
   only_if_smaller: boolean;
 }
 
+/** 压缩包格式（Rust `ArchiveFormat`）。 */
+export type ArchiveFormat = "zip" | "tar_gz" | "tar";
+
+/**
+ * 预设类型（Rust `PresetKind`）：`convert` 走路由图；其余是工具动作，
+ * 产物是一个压缩包 / 一批分页图。
+ */
+export type PresetKind =
+  | "convert"
+  | { pack: { archive: ArchiveFormat } }
+  | "extract"
+  | { pdf_pages: { to: ConvertFormat } }
+  | "pdf_to_cbz";
+
 /**
  * 转换预设：一份完整配方（Rust `ConversionPreset`）。
  *
@@ -416,6 +413,8 @@ export interface OutputRule {
 export interface ConversionPreset {
   id: string;
   name: string;
+  /** 预设类型（缺省 = 格式转换，旧配置反序列化时 Rust 会补默认值）。 */
+  kind?: PresetKind;
   target: TargetSpec;
   image: ImageOptions;
   output: OutputRule;
@@ -428,6 +427,30 @@ export interface ConversionPreset {
 /** 转换预设库（Rust `ConversionConfig`）。 */
 export interface ConversionConfig {
   presets: ConversionPreset[];
+}
+
+/** 本地备份导出结果（Rust `ExportResult`）。 */
+export interface ExportResult {
+  /** 导出的包目录绝对路径。 */
+  path: string;
+  /** 导出的历史条数。 */
+  clips: number;
+  /** 随包复制的图片文件数。 */
+  files_copied: number;
+  /** 随包复制的图片总字节数。 */
+  bytes: number;
+}
+
+/** 本地备份导入结果（Rust `ImportSummary`）。 */
+export interface ImportResult {
+  /** 成功写入的历史条数。 */
+  clips: number;
+  /** 与既有记录合并的条数。 */
+  merged: number;
+  /** 失败/跳过的条数。 */
+  skipped: number;
+  /** 失败明细。 */
+  errors: string[];
 }
 
 /** 单文件转换状态（Rust `FileState`）。 */

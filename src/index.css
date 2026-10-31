@@ -45,6 +45,13 @@
   --material-menu: rgba(44, 44, 46, 0.85);
   --material-modal: rgba(44, 44, 46, 0.95);
 
+  /* 圆环编辑器（设置页）：扇区与标签不能写死白色，浅色外观会看不见。 */
+  --ring-sector-fill: rgba(255, 255, 255, 0.08);
+  --ring-sector-hover: rgba(255, 255, 255, 0.16);
+  --ring-sector-stroke: rgba(255, 255, 255, 0.16);
+  --ring-label: rgba(255, 255, 255, 0.82);
+  --ring-label-active: #e8a33d;
+
   /* 圆角 */
   --radius-window-panel: 12px;
   --radius-window-main: 10px;
@@ -97,6 +104,13 @@
   --material-window: rgba(250, 250, 252, 0.80);
   --material-menu: rgba(250, 250, 250, 0.90);
   --material-modal: rgba(250, 250, 250, 0.97);
+
+  /* 浅色下扇区用淡黑填充，标签用深色文字。 */
+  --ring-sector-fill: rgba(0, 0, 0, 0.05);
+  --ring-sector-hover: rgba(0, 0, 0, 0.09);
+  --ring-sector-stroke: rgba(0, 0, 0, 0.14);
+  --ring-label: rgba(0, 0, 0, 0.8);
+  --ring-label-active: #8a5816;
 }
 
 html,
@@ -276,6 +290,12 @@ body {
   .card-group {
     @apply rounded-[10px] bg-group p-[16px];
   }
+  /* 对话框表面：深色接近 #2C2C2E，浅色换成近白；不能写死 bg-[#2C2C2E]，
+   * 否则浅色下文字被 .light 映射成深色，正好落在深底上看不见。 */
+  .dialog-surface {
+    background: var(--material-modal);
+    border: 1px solid var(--hairline-strong);
+  }
   .menu {
     /* overflow 保持 visible：标签子菜单（评审 U4）要飞出父级菜单边界。 */
     @apply min-w-[200px] overflow-visible rounded-md border border-white/[0.12] p-[5px] shadow-menu;
@@ -451,6 +471,22 @@ body {
   animation: ring-handoff 220ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
+/* 设置页圆环扇区：颜色走变量（WebKit 不支持 fill="var(...)" 这种呈现属性）。 */
+.ring-sector {
+  fill: var(--ring-sector-fill);
+  stroke: var(--ring-sector-stroke);
+}
+
+.ring-sector[data-hover="true"] {
+  fill: var(--ring-sector-hover);
+}
+
+.ring-sector[data-drag="true"] {
+  fill: rgba(232, 163, 61, 0.22);
+  stroke: var(--ring-label-active);
+  stroke-dasharray: 5 4;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -494,8 +530,14 @@ body {
 .light [class~="text-danger-soft"] { color: var(--danger-text); }
 .light [class~="text-success-soft"] { color: var(--success); }
 .light [class~="text-warning"] { color: var(--warning); }
-/* 强调色文字：亮琥珀在浅底上对比不足，换深一档（与 accent-700 同值）。 */
-.light [class~="text-accent"] { color: #b3741f; }
+/* 强调色文字：亮琥珀在浅底上对比不足，换深一档。
+ * 注意：JSX 实际用的是 text-accent-500 / text-accent-400（侧边栏选中图标、
+ * 收藏星标、Toast 链接），这三档必须一起映射 —— 只写裸 text-accent 等于没生效，
+ * 浅色下仍是 #E8A33D/#F0B35A 落在近白底，对比度仅 ~2:1（WCAG AA 需 4.5:1）。
+ * 取 accent-800 #8A5816，白底约 6:1。 */
+.light [class~="text-accent"],
+.light [class~="text-accent-500"],
+.light [class~="text-accent-400"] { color: #8a5816; }
 
 /* 类型徽章：深色下是「14% 彩底 + 同系亮字」，浅底下亮字读不清，
  * 底色保持淡彩、文字换同系深色（unknown 原本是 50% 白，浅底下直接消失）。 */
@@ -522,8 +564,9 @@ body {
 .light [class~="bg-group"] { background-color: var(--bg-group); }
 .light [class~="bg-raised"] { background-color: var(--bg-raised); }
 .light [class~="bg-win"] { background-color: var(--bg-window); }
-/* 管理窗口侧边栏：深色下是黑色叠加，浅色下换成淡灰 */
-.light [class~="bg-black/[0.15]"] { background-color: rgba(0, 0, 0, 0.035); }
+/* 管理窗口侧边栏：深色下是黑色叠加，浅色下换成淡灰。
+ * 原来 3.5% 黑在近白窗口上几乎看不出分层（评审 L2），提到 7%。 */
+.light [class~="bg-black/[0.15]"] { background-color: rgba(0, 0, 0, 0.07); }
 
 /* 描边 */
 .light [class~="border-white/[0.06]"] { border-color: rgba(0, 0, 0, 0.06); }

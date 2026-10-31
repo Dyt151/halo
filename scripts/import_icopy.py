@@ -13,10 +13,9 @@ iCopy 的数据布局（逆向结论，见 docs/REA-iCopy-Filee.md §1.3）：
     需经 libcompression 解压后再解析
   - `filepath`：iCopy 容器内的图片/文件绝对路径
 
-- `reply.sqlite` 表 `t_group(id, name, sort)` / `t_reply(id, groupId, title, content, data)`
-
 本脚本只负责「读 iCopy + 解归档 + 复制图片文件」，写库由 ClipBase 侧
 `clipbase_import` 二进制完成（保证 hash / preview / 序列化与 App 内部完全一致）。
+快捷回复功能已下线，iCopy 的 `reply.sqlite` 不再迁移。
 
 用法：
     python3 scripts/import_icopy.py            # 生成 ~/.clipbase/data/import/icopy.json
@@ -312,37 +311,12 @@ def build_clips(dry_run: bool) -> tuple[list[dict], dict]:
     return items, stats
 
 
-def build_replies() -> list[dict]:
-    db = ICOPY_CONTAINER / "reply.sqlite"
-    if not db.is_file():
-        return []
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    groups = {
-        gid: name
-        for gid, name in con.execute("select id, name from t_group")
-    }
-    rows = []
-    for gid, title, content in con.execute(
-        "select groupId, title, content from t_reply"
-    ):
-        rows.append(
-            {
-                "group": groups.get(gid),
-                "title": title or "",
-                "content": content or "",
-            }
-        )
-    con.close()
-    return rows
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="从 iCopy 提取历史到 ClipBase 导入文件")
     parser.add_argument("--dry-run", action="store_true", help="只统计，不写文件")
     args = parser.parse_args()
 
     clips, stats = build_clips(args.dry_run)
-    replies = build_replies()
 
     print("iCopy → ClipBase 提取结果")
     print(f"  纯文本 : {stats['text']}")
@@ -351,7 +325,6 @@ def main() -> int:
     print(f"  图片   : {stats['image']}")
     print(f"  文件   : {stats['files']}")
     print(f"  跳过   : {stats['skipped']}")
-    print(f"  回复   : {len(replies)}")
     print(f"  合计   : {len(clips)}")
 
     if args.dry_run:
@@ -360,7 +333,7 @@ def main() -> int:
     CLIPBASE_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
     out = CLIPBASE_IMPORT_DIR / "icopy.json"
     with out.open("w", encoding="utf-8") as f:
-        json.dump({"clips": clips, "replies": replies}, f, ensure_ascii=False)
+        json.dump({"clips": clips}, f, ensure_ascii=False)
     print(f"\n已写入 {out}")
     print("下一步执行：cargo run --bin clipbase_import -- "
           f"{CLIPBASE_IMPORT_DIR / 'icopy.json'}")

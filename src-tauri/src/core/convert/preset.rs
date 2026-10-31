@@ -206,7 +206,12 @@ pub struct ConversionPreset {
     pub id: String,
     /// 展示名（环形扇区标签 / 设置页标题）。
     pub name: String,
-    /// 目标规格。
+    /// 动作类型：格式转换（默认），或打包 / 解压 / PDF 分页这类**非格式动作**。
+    ///
+    /// 旧配置没有这个字段，serde 默认落到 `Convert`，无需迁移。
+    #[serde(default)]
+    pub kind: PresetKind,
+    /// 目标规格。`PresetKind::Convert` 之外的动作不读它（占位 `SameAsSource`）。
     pub target: TargetSpec,
     /// 图像选项。
     #[serde(default)]
@@ -225,6 +230,83 @@ pub struct ConversionPreset {
     pub builtin: bool,
 }
 
+/// 动作类型：`Convert` 是格式到格式的转换，其余是**整批 / 多输出**的工具动作。
+///
+/// 工具动作不进路由图：可用性与执行都在 `job.rs` 的动作管线上单独判定。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresetKind {
+    /// 格式转换（默认）。
+    Convert,
+    /// 打包：整批文件 → 一个压缩包。
+    Pack { archive: ArchiveFormat },
+    /// 解压：每个压缩包 → 一个文件夹（ZIP / TAR / TAR.GZ）。
+    Extract,
+    /// PDF 每页渲染成一张图（多输出）。
+    PdfPages { to: ConvertFormat },
+    /// PDF → CBZ 漫画包（每页一张图打进 zip）。
+    PdfToCbz,
+}
+
+impl Default for PresetKind {
+    fn default() -> Self {
+        Self::Convert
+    }
+}
+
+impl PresetKind {
+    /// 是否为「格式转换」（走路由管线）。
+    pub fn is_convert(&self) -> bool {
+        matches!(self, Self::Convert)
+    }
+}
+
+/// 打包 / 解压支持的压缩格式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveFormat {
+    Zip,
+    TarGz,
+    Tar,
+}
+
+impl ArchiveFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Zip => "zip",
+            Self::TarGz => "tar.gz",
+            Self::Tar => "tar",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Zip => "ZIP",
+            Self::TarGz => "TAR.GZ",
+            Self::Tar => "TAR",
+        }
+    }
+
+    /// 按文件扩展名识别压缩包（`tar.gz` 看最后两段）。
+    pub fn from_path(path: &str) -> Option<Self> {
+        let lower = path.to_ascii_lowercase();
+        let name = std::path::Path::new(&lower);
+        let ext = name.extension()?.to_str()?;
+        let stem_ext = name
+            .file_stem()
+            .and_then(|s| std::path::Path::new(s).extension())
+            .and_then(|e| e.to_str());
+        match ext {
+            "zip" => Some(Self::Zip),
+            "tar" => Some(Self::Tar),
+            // `.tgz` 本身就是 tar.gz 的别名；`.gz` 只有前面还有 `.tar` 才算。
+            "tgz" => Some(Self::TarGz),
+            "gz" if stem_ext == Some("tar") => Some(Self::TarGz),
+            _ => None,
+        }
+    }
+}
+
 impl ConversionPreset {
     /// 目标格式（`SameAsSource` 时等于源格式）。
     pub fn target_format(&self, source: ConvertFormat) -> ConvertFormat {
@@ -238,6 +320,9 @@ impl ConversionPreset {
 
     /// 圆环标签：JPG 预设把质量写进名字，否则两个 JPG 扇区长一样。
     pub fn ring_label(&self) -> String {
+        if !self.kind.is_convert() {
+            return self.name.clone();
+        }
         if self.target == TargetSpec::Explicit(ConvertFormat::Jpg) && self.name.trim().is_empty() {
             return format!("JPG {}%", self.image.jpeg_quality);
         }
@@ -246,41 +331,90 @@ impl ConversionPreset {
 }
 
 /// 内置预设 ID（迁移时把旧的裸格式 id 映射到这里）。
-pub const BUILTIN_IDS: [&str; 10] = [
+///
+/// 本版只保留实际用得到的 11 种格式：ico/qoi/tga/pnm/jp2/avif/md/doc/odt/rtf/mhtml
+/// 的动作与预设已从源码删除，旧配置里指向它们的条目由 `Config::migrate` 清掉。
+pub const BUILTIN_IDS: [&str; 19] = [
     "img.jpg",
-    "img.jpg.q70",
     "img.png",
     "img.webp",
     "img.gif",
     "img.bmp",
     "img.tiff",
-    "doc.md",
+    "img.heic",
+    "img.pdf",
     "doc.html",
     "doc.txt",
+    "doc.docx",
+    "doc.pdf",
+    "act.pack.zip",
+    "act.pack.tar.gz",
+    "act.pack.tar",
+    "act.extract",
+    "act.pdf.pages.png",
+    "act.pdf.pages.jpg",
+    "act.pdf.cbz",
+];
+
+/// 上一版（全部格式时代）就存在、本版继续提供的内置预设 id。
+///
+/// 用户预设库里缺席这些 id 视为「用户删过」，迁移不复活；只有**本版新增**的
+/// 内置 id 缺席才当成「版本升级」，由 `Config::migrate` 补进预设库。
+pub const LEGACY_BUILTIN_IDS: [&str; 12] = [
+    "img.jpg",
+    "img.png",
+    "img.webp",
+    "img.gif",
+    "img.bmp",
+    "img.tiff",
+    "img.heic",
+    "img.pdf",
+    "doc.html",
+    "doc.txt",
+    "doc.docx",
+    "doc.pdf",
+];
+
+/// 工具动作内置 id（打包 / 解压 / PDF 分页），环形盘按固定顺序追加在正面末尾。
+pub const ACTION_BUILTIN_IDS: [&str; 7] = [
+    "act.pack.zip",
+    "act.pack.tar.gz",
+    "act.pack.tar",
+    "act.extract",
+    "act.pdf.pages.png",
+    "act.pdf.pages.jpg",
+    "act.pdf.cbz",
 ];
 
 /// 旧的「裸格式 id」→ 内置预设 ID。
-pub fn builtin_id_for_format(format: ConvertFormat) -> &'static str {
+pub fn builtin_id_for_format(format: ConvertFormat) -> Option<&'static str> {
     match format {
-        ConvertFormat::Png => "img.png",
-        ConvertFormat::Jpg => "img.jpg",
-        ConvertFormat::Webp => "img.webp",
-        ConvertFormat::Gif => "img.gif",
-        ConvertFormat::Bmp => "img.bmp",
-        ConvertFormat::Tiff => "img.tiff",
-        ConvertFormat::Md => "doc.md",
-        ConvertFormat::Html => "doc.html",
-        ConvertFormat::Txt => "doc.txt",
+        ConvertFormat::Png => Some("img.png"),
+        ConvertFormat::Jpg => Some("img.jpg"),
+        ConvertFormat::Webp => Some("img.webp"),
+        ConvertFormat::Gif => Some("img.gif"),
+        ConvertFormat::Bmp => Some("img.bmp"),
+        ConvertFormat::Tiff => Some("img.tiff"),
+        ConvertFormat::Heic => Some("img.heic"),
+        ConvertFormat::Html => Some("doc.html"),
+        ConvertFormat::Txt => Some("doc.txt"),
+        ConvertFormat::Pdf => Some("doc.pdf"),
+        ConvertFormat::Docx => Some("doc.docx"),
     }
 }
 
-/// 内置预设库：每个格式一条，外加一条「另一个 JPG 质量」示范同目标不同参数。
+/// 内置预设库：每个可产出格式一条，外加「图片 → PDF」与打包 / 解压 / PDF 分页
+/// 等工具动作。
 pub fn builtin_presets() -> Vec<ConversionPreset> {
-    let mut out: Vec<ConversionPreset> = Vec::with_capacity(ALL_FORMATS.len() + 1);
+    let mut out: Vec<ConversionPreset> = Vec::with_capacity(ALL_FORMATS.len() + 8);
     for format in ALL_FORMATS {
+        let Some(id) = builtin_id_for_format(format) else {
+            continue;
+        };
         out.push(ConversionPreset {
-            id: builtin_id_for_format(format).to_string(),
+            id: id.to_string(),
             name: default_preset_name(format, DEFAULT_JPEG_QUALITY),
+            kind: PresetKind::Convert,
             target: TargetSpec::Explicit(format),
             image: ImageOptions::default(),
             output: OutputRule::default(),
@@ -289,18 +423,50 @@ pub fn builtin_presets() -> Vec<ConversionPreset> {
         });
     }
     out.push(ConversionPreset {
-        id: "img.jpg.q70".to_string(),
-        name: default_preset_name(ConvertFormat::Jpg, 70),
-        target: TargetSpec::Explicit(ConvertFormat::Jpg),
-        image: ImageOptions {
-            jpeg_quality: 70,
-            ..ImageOptions::default()
-        },
+        id: "img.pdf".to_string(),
+        name: default_preset_name(ConvertFormat::Pdf, DEFAULT_JPEG_QUALITY),
+        kind: PresetKind::Convert,
+        target: TargetSpec::Explicit(ConvertFormat::Pdf),
+        image: ImageOptions::default(),
         output: OutputRule::default(),
-        reencode_same_format: true,
+        reencode_same_format: false,
         builtin: true,
     });
+    for action in builtin_actions() {
+        out.push(action);
+    }
     out
+}
+
+/// 工具动作内置预设（固定顺序，环形盘把它们追加在每张盘的正面末尾）。
+pub fn builtin_actions() -> Vec<ConversionPreset> {
+    let cases: [(&str, &str, PresetKind); 7] = [
+        ("act.pack.zip", "打包 ZIP", PresetKind::Pack { archive: ArchiveFormat::Zip }),
+        (
+            "act.pack.tar.gz",
+            "打包 TAR.GZ",
+            PresetKind::Pack { archive: ArchiveFormat::TarGz },
+        ),
+        ("act.pack.tar", "打包 TAR", PresetKind::Pack { archive: ArchiveFormat::Tar }),
+        ("act.extract", "解压压缩包", PresetKind::Extract),
+        ("act.pdf.pages.png", "PDF → PNG", PresetKind::PdfPages { to: ConvertFormat::Png }),
+        ("act.pdf.pages.jpg", "PDF → JPG", PresetKind::PdfPages { to: ConvertFormat::Jpg }),
+        ("act.pdf.cbz", "PDF → CBZ", PresetKind::PdfToCbz),
+    ];
+    cases
+        .into_iter()
+        .map(|(id, name, kind)| ConversionPreset {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind,
+            // 动作不读 target，占位即可（serde 需要非缺省字段）。
+            target: TargetSpec::SameAsSource,
+            image: ImageOptions::default(),
+            output: OutputRule::default(),
+            reencode_same_format: false,
+            builtin: true,
+        })
+        .collect()
 }
 
 /// 预设展示名：JPG 带质量，其余就是格式名。
@@ -321,7 +487,7 @@ pub fn resolve_action_id(raw: &str) -> Option<String> {
     if BUILTIN_IDS.contains(&trimmed) {
         return Some(trimmed.to_string());
     }
-    ConvertFormat::from_ext(trimmed).map(|f| builtin_id_for_format(f).to_string())
+    ConvertFormat::from_ext(trimmed).and_then(|f| builtin_id_for_format(f).map(str::to_string))
 }
 
 /// 迁移用：按 ID 查预设，找不到就按旧格式名现造一条（配置里残留的旧动作不至于丢）。
@@ -330,10 +496,12 @@ pub fn find_or_legacy(presets: &[ConversionPreset], id: &str) -> Option<Conversi
         return Some(found.clone());
     }
     let format = ConvertFormat::from_ext(id)?;
+    let preset_id = builtin_id_for_format(format)?;
     let quality = DEFAULT_JPEG_QUALITY;
     Some(ConversionPreset {
-        id: builtin_id_for_format(format).to_string(),
+        id: preset_id.to_string(),
         name: default_preset_name(format, quality),
+        kind: PresetKind::Convert,
         target: TargetSpec::Explicit(format),
         image: ImageOptions::default(),
         output: OutputRule::default(),
@@ -342,24 +510,57 @@ pub fn find_or_legacy(presets: &[ConversionPreset], id: &str) -> Option<Conversi
     })
 }
 
-/// 默认正面顺序（与前端 `DEFAULT_FRONT` 对齐）。
-///
-/// 文档格式和图片格式**混排**：旧布局把 `doc.md` 放到背面，选一个 `.txt` 时正面
-/// 只剩 HTML（`.txt` 本身是目标、图片动作对它无路由），盘上看着就像只剩一个动作。
-/// 现在常见文档目标（MD/HTML/TXT）都在正面，背面只放少见图片格式。
-pub fn default_front_actions() -> Vec<String> {
-    ["img.jpg", "img.png", "doc.md", "doc.html", "doc.txt"]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
+/// 默认图片盘正面：常用图片格式 + PDF（图片 → PDF）。
+pub const DEFAULT_IMAGES: [&str; 6] = [
+    "img.jpg",
+    "img.png",
+    "img.webp",
+    "img.gif",
+    "img.heic",
+    "img.pdf",
+];
+
+/// 默认文本盘正面：文本互转。
+pub const DEFAULT_TEXT: [&str; 2] = ["doc.html", "doc.txt"];
+
+/// 默认文档盘正面（PDF / Word 文件弹这张盘）。
+pub const DEFAULT_DOCS: [&str; 6] = [
+    "img.png",
+    "img.jpg",
+    "doc.txt",
+    "doc.html",
+    "doc.docx",
+    "doc.pdf",
+];
+
+/// 默认兜底盘（catch-all）正面：图片目标在前，文本目标补位。
+pub fn default_mixed_actions() -> Vec<String> {
+    [
+        "img.jpg",
+        "img.png",
+        "img.webp",
+        "img.gif",
+        "img.bmp",
+        "img.tiff",
+        "doc.html",
+        "doc.txt",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
-/// 默认背面顺序：少见图片格式，用 Tab / 滚轮翻面（空 = 不能翻面）。
-pub fn default_back_actions() -> Vec<String> {
-    ["img.webp", "img.gif", "img.bmp", "img.tiff"]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
+/// 旧「正面 + 背面」合并后的默认顺序（迁移 / 兜底重置用）。
+///
+/// 背面已取消：所有扇区都在这一个列表里，按类别拆进图片 / 文本 / 文档三张盘。
+pub fn default_front_actions() -> Vec<String> {
+    let mut merged: Vec<String> = DEFAULT_IMAGES.iter().map(|s| s.to_string()).collect();
+    for id in DEFAULT_TEXT.iter().chain(DEFAULT_DOCS.iter()) {
+        if !merged.contains(&id.to_string()) {
+            merged.push(id.to_string());
+        }
+    }
+    merged
 }
 
 
@@ -383,6 +584,7 @@ mod tests {
         let preset = ConversionPreset {
             id: "img.jpg".into(),
             name: "JPG 60%".into(),
+            kind: PresetKind::Convert,
             target: TargetSpec::Explicit(ConvertFormat::Jpg),
             image: ImageOptions {
                 jpeg_quality: 60,
@@ -413,18 +615,67 @@ mod tests {
         assert_eq!(preset.output.conflict, ConflictPolicy::Rename);
         assert_eq!(preset.output.name_template, DEFAULT_NAME_TEMPLATE);
         assert!(!preset.reencode_same_format);
+        assert_eq!(preset.kind, PresetKind::Convert);
     }
 
     #[test]
-    fn two_jpg_presets_do_not_share_quality() {
+    fn action_presets_roundtrip_and_detect_archives() {
+        let pack: ConversionPreset = serde_json::from_str(
+            r#"{"id":"act.pack.zip","name":"打包 ZIP","kind":{"pack":{"archive":"zip"}},"target":"*"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            pack.kind,
+            PresetKind::Pack { archive: ArchiveFormat::Zip }
+        );
+        assert_eq!(pack.ring_label(), "打包 ZIP");
+
+        let pages: ConversionPreset = serde_json::from_str(
+            r#"{"id":"act.pdf.pages.png","name":"PDF → PNG","kind":{"pdf_pages":{"to":"png"}},"target":"*"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            pages.kind,
+            PresetKind::PdfPages { to: ConvertFormat::Png }
+        );
+
+        // 动作 id 都是内置 id，能解析回来。
+        for id in ACTION_BUILTIN_IDS {
+            assert_eq!(resolve_action_id(id).as_deref(), Some(id));
+        }
+        let actions = builtin_actions();
+        assert_eq!(actions.len(), ACTION_BUILTIN_IDS.len());
+        assert!(actions.iter().all(|a| !a.kind.is_convert()));
+
+        // 压缩包扩展名识别（tar.gz 看两段）。
+        assert_eq!(ArchiveFormat::from_path("/a/b.zip"), Some(ArchiveFormat::Zip));
+        assert_eq!(ArchiveFormat::from_path("/a/b.TAR"), Some(ArchiveFormat::Tar));
+        assert_eq!(ArchiveFormat::from_path("/a/b.tar.gz"), Some(ArchiveFormat::TarGz));
+        assert_eq!(ArchiveFormat::from_path("/a/b.tgz"), Some(ArchiveFormat::TarGz));
+        assert_eq!(ArchiveFormat::from_path("/a/b.gz"), None);
+        assert_eq!(ArchiveFormat::from_path("/a/b.7z"), None);
+        assert_eq!(ArchiveFormat::from_path("/a/b"), None);
+    }
+
+    #[test]
+    fn builtin_library_covers_kept_formats_and_actions() {
         let presets = builtin_presets();
-        let a = presets.iter().find(|p| p.id == "img.jpg").unwrap();
-        let b = presets.iter().find(|p| p.id == "img.jpg.q70").unwrap();
-        assert_eq!(a.image.jpeg_quality, DEFAULT_JPEG_QUALITY);
-        assert_eq!(b.image.jpeg_quality, 70);
-        // 只有一个声明了「同格式也重编码」，另一个对 JPG 输入应跳过。
-        assert!(!a.reencode_same_format);
-        assert!(b.reencode_same_format);
+        let ids: Vec<&str> = presets.iter().map(|p| p.id.as_str()).collect();
+        for id in BUILTIN_IDS {
+            assert!(ids.contains(&id), "缺少内置预设 {id}");
+        }
+        assert_eq!(presets.len(), BUILTIN_IDS.len());
+        // 已删除的格式不再有内置预设。
+        for gone in ["img.ico", "img.avif", "doc.md", "doc.odt", "img.jpg.q70"] {
+            assert!(!ids.contains(&gone), "{gone} 不该再出现");
+        }
+        // 图片盘默认内容都是真实存在的预设。
+        for id in DEFAULT_IMAGES.iter().chain(DEFAULT_TEXT.iter()).chain(DEFAULT_DOCS.iter()) {
+            assert!(ids.contains(id), "默认盘引用了不存在的预设 {id}");
+        }
+        for id in default_mixed_actions() {
+            assert!(ids.contains(&id.as_str()), "兜底盘引用了不存在的预设 {id}");
+        }
     }
 
     #[test]
@@ -432,7 +683,10 @@ mod tests {
         assert_eq!(resolve_action_id("jpg").as_deref(), Some("img.jpg"));
         assert_eq!(resolve_action_id("html").as_deref(), Some("doc.html"));
         // 已经是预设 ID 的原样保留。
-        assert_eq!(resolve_action_id("img.jpg.q70").as_deref(), Some("img.jpg.q70"));
+        assert_eq!(resolve_action_id("img.png").as_deref(), Some("img.png"));
+        // 已删除格式不再能解析出预设。
+        assert_eq!(resolve_action_id("md"), None);
+        assert_eq!(resolve_action_id("ico"), None);
         assert_eq!(resolve_action_id("nope"), None);
         assert_eq!(resolve_action_id("  "), None);
     }

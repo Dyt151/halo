@@ -12,8 +12,8 @@ fn defaults_on_empty_db() {
     assert_eq!(c.max_bytes, 1024 * 1024 * 1024);
     assert!(c.monitor_enabled);
     assert_eq!(c.poll_interval_ms, 500);
-    assert_eq!(c.sensitivity, SensitivityPolicy::Ignore);
-    assert_eq!(c.hotkeys.toggle, "Control+C");
+    assert_eq!(c.sensitivity, SensitivityPolicy::Flag);
+    assert_eq!(c.hotkeys.toggle, "Control+Option+C");
     assert_eq!(c.hotkeys.stack_paste, "Control+Shift+V");
     assert!(!c.sync.enabled);
     assert_eq!(c.sync.remote_file, "clipbase-sync.json");

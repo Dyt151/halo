@@ -14,14 +14,13 @@ import { invokeCommand } from "./ipc";
 export const MAIN_WINDOW_LABEL = "main";
 export const PANEL_WINDOW_LABEL = "panel";
 export const RING_WINDOW_LABEL = "ring";
-export const PICKER_WINDOW_LABEL = "picker";
 
 /**
  * 主窗口的设置分区（评审任务 1–3：主窗口已精简为纯设置中心）。
  *
  * `history` 不在侧边栏一级展示，作为二级页从面板或「设置 → 剪贴板」进入（任务 5）。
  *
- * 快捷键 / 快捷回复 / 模块 三个分区已下线（用户只需要面板 + 设置），
+ * 快捷键 / 模块 分区已下线（用户只需要面板 + 设置），
  * 旧值由 `MainWindow::normalizeSection` 回落到「通用」。
  */
 export type MainPage =
@@ -30,6 +29,7 @@ export type MainPage =
   | "ring"
   | "context-menu"
   | "sync"
+  | "backup"
   | "permissions"
   | "about"
   | "history";
@@ -45,11 +45,6 @@ export function isPanelWindow(): boolean {
 /** 当前窗口是否为环形转换盘。 */
 export function isRingWindow(): boolean {
   return getCurrentWebviewWindow().label === RING_WINDOW_LABEL;
-}
-
-/** 当前窗口是否为回复选择器。 */
-export function isPickerWindow(): boolean {
-  return getCurrentWebviewWindow().label === PICKER_WINDOW_LABEL;
 }
 
 /** 打开管理窗口，可指定落到哪一页。 */

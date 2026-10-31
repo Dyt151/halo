@@ -27,11 +27,19 @@ const r = innerRadius(R);
 /** 铅笔按钮直径：命中半径 13px（Editor §1.5），所以直径 26px。 */
 const PENCIL_PX = 26;
 
+/**
+ * 扇区多到这个数之后标签改为沿半径排布（与运行态环形盘同一阈值）。
+ *
+ * 16 片时一段弧长只有 ~42px，「打包 TAR.GZ」这种名字切向排布必然压到
+ * 隔壁；沿半径有 R−r ≈ 87px，放得下。
+ */
+const RADIAL_LABELS_FROM = 13;
+
 export interface RingEditorProps {
   /** 当前 Profile 的预设 id（顺时针，索引 0 在 12 点）。 */
   ids: string[];
   labelOf: (id: string) => string;
-  /** 圆心主标题（数量 / 上限）。 */
+  /** 圆心主标题（动作数量）。 */
   centerTitle: string;
   /** 圆心副标题（Profile 名 / 类型）。 */
   centerHint: string;
@@ -115,11 +123,10 @@ export default function RingEditor({
               role="button"
               tabIndex={0}
               aria-label={`${labelOf(id)}，第 ${i + 1} 个，共 ${n} 个`}
-              className="cursor-grab outline-none focus-visible:stroke-accent"
-              fill={isDragging ? "rgba(232,163,61,0.22)" : isHover ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.08)"}
-              stroke={isDragging ? "#E8A33D" : "rgba(255,255,255,0.16)"}
+              className="ring-sector cursor-grab outline-none focus-visible:stroke-accent"
+              data-hover={isHover || undefined}
+              data-drag={isDragging || undefined}
               strokeWidth={1}
-              strokeDasharray={isDragging ? "5 4" : undefined}
               style={{
                 transform: isHover ? `translate(${u.x * 4}px, ${u.y * 4}px)` : undefined,
                 transition: `transform ${ease}, fill ${ease}`,
@@ -152,11 +159,20 @@ export default function RingEditor({
         const p = labelAnchor(C, C, R, r, i, n);
         const isHover = hover === i && !draggingId;
         const isDragging = draggingId === id;
+        // 片数多时标签沿半径排布：外层绕圆心转到本扇区角度，内层再把文字转
+        // 90°；左半圈反过来，保证任何位置都不会倒着读。
+        const radial = n >= RADIAL_LABELS_FROM;
+        const deg = (i * 360) / n;
+        const flip = deg > 90 && deg < 270;
         return (
           <div
             key={id}
             className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2"
-            style={{ left: pct(p.x), top: pct(p.y) }}
+            style={{
+              left: pct(p.x),
+              top: pct(p.y),
+              transform: `translate(-50%, -50%)${radial ? ` rotate(${deg.toFixed(2)}deg)` : ""}`,
+            }}
           >
             {isHover ? (
               <button
@@ -173,9 +189,10 @@ export default function RingEditor({
               </button>
             ) : (
               <span
-                className="block max-w-[86px] truncate text-center text-[11px]/[14px] font-medium"
+                className={`block ${radial ? "max-w-[88px]" : "max-w-[86px]"} truncate text-center font-medium ${radial ? "text-[10px]/[13px]" : "text-[11px]/[14px]"}`}
                 style={{
-                  color: isDragging ? "#E8A33D" : "rgba(255,255,255,0.82)",
+                  transform: radial ? `rotate(${flip ? 90 : -90}deg)` : undefined,
+                  color: isDragging ? "var(--ring-label-active)" : "var(--ring-label)",
                   opacity: isDragging ? 0.7 : 1,
                   transition: `color ${ease}, opacity ${ease}`,
                 }}

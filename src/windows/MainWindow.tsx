@@ -81,6 +81,18 @@ const NAV: { key: MainPage; label: string; group: "功能" | "系统"; path: Rea
     ),
   },
   {
+    key: "backup",
+    label: "备份与迁移",
+    group: "系统",
+    path: (
+      <>
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="M7 10l5 5 5-5" />
+        <path d="M12 15V3" />
+      </>
+    ),
+  },
+  {
     key: "permissions",
     label: "权限",
     group: "系统",
@@ -124,6 +136,7 @@ function normalizeSection(raw: string | null | undefined): MainPage | null {
     case "ring":
     case "context-menu":
     case "sync":
+    case "backup":
     case "permissions":
     case "about":
       return raw;

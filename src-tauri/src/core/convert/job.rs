@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use super::action;
 use super::edge::{ConversionStep, ConvertError, EngineId};
 use super::engines;
 use super::format::{detect_format, ConvertFormat};
@@ -94,7 +95,7 @@ pub struct ConversionFileResult {
 }
 
 impl ConversionFileResult {
-    fn pending(source: &str) -> Self {
+    pub(crate) fn pending(source: &str) -> Self {
         Self {
             source: source.to_string(),
             detected_format: None,
@@ -109,13 +110,13 @@ impl ConversionFileResult {
         }
     }
 
-    fn skip_with(mut self, code: SkipCode, detail: impl Into<String>) -> Self {
+    pub(crate) fn skip_with(mut self, code: SkipCode, detail: impl Into<String>) -> Self {
         self.state = FileState::Skipped;
         self.skip = Some(SkipReason::new(code, detail));
         self
     }
 
-    fn fail(mut self, error: ConvertError) -> Self {
+    pub(crate) fn fail(mut self, error: ConvertError) -> Self {
         self.state = FileState::Failed;
         self.error = Some(error);
         self
@@ -364,6 +365,36 @@ pub fn run_with_cancel(
         unregister(&job_id);
         return job;
     }
+
+    // 工具动作（打包 / 解压 / PDF 分页 / CBZ）不走路由管线：
+    // 产物可能是目录或整批一个文件，逐文件执行、逐个推进度。
+    if !preset.kind.is_convert() {
+        let results: Vec<ConversionFileResult> =
+            if matches!(preset.kind, super::preset::PresetKind::Pack { .. }) {
+                action::run_pack(sources, preset, &cancel)
+            } else {
+                sources
+                    .iter()
+                    .map(|source| action::run_file_action(source, preset, &work_dir, &cancel))
+                    .collect()
+            };
+        let total = job.files.len();
+        for (index, result) in results.into_iter().enumerate() {
+            job.files[index] = result;
+            on_update(&job.files[index], index + 1, total);
+        }
+        let _ = std::fs::remove_dir_all(&work_dir);
+        unregister(&job_id);
+        job.state = if cancel.is_cancelled() {
+            JobState::Cancelled
+        } else if job.failed() > 0 {
+            JobState::CompletedWithErrors
+        } else {
+            JobState::Completed
+        };
+        return job;
+    }
+
     let allocator = Arc::new(OutputAllocator::new());
     let pool = engine_pool();
 
@@ -650,6 +681,13 @@ pub fn preset_availability(
     preset: &ConversionPreset,
     formats: &[Option<ConvertFormat>],
 ) -> (usize, usize, Option<String>) {
+    if !preset.kind.is_convert() {
+        return (
+            0,
+            formats.len(),
+            Some("工具动作不参与格式可用性判定（用 action::availability）".to_string()),
+        );
+    }
     let mut convertible = 0usize;
     let mut skipped = 0usize;
     let mut first_reason: Option<String> = None;
@@ -683,7 +721,7 @@ pub fn preset_availability(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::convert::preset::{ConflictPolicy, ImageOptions, OutputRule, TargetSpec};
+    use crate::core::convert::preset::{ConflictPolicy, ImageOptions, OutputRule, PresetKind, TargetSpec};
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -699,6 +737,7 @@ mod tests {
         ConversionPreset {
             id: "test".into(),
             name: "test".into(),
+            kind: PresetKind::Convert,
             target: TargetSpec::Explicit(target),
             image: ImageOptions::default(),
             output: OutputRule {
@@ -793,6 +832,7 @@ mod tests {
         let preset = ConversionPreset {
             id: "test".into(),
             name: "test".into(),
+            kind: PresetKind::Convert,
             target: TargetSpec::Explicit(ConvertFormat::Png),
             output: OutputRule {
                 conflict: ConflictPolicy::Overwrite,

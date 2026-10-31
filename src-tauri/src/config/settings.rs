@@ -10,8 +10,13 @@ use crate::core::ring::profile::normalize_extensions;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SensitivityPolicy {
-    /// 默认：识别为敏感内容后不入库。
+    /// 默认：识别为敏感内容后照常入库，只打 `sensitive` 标记。
+    ///
+    /// 旧默认 `Ignore` 会静默丢条目（复制一句「把 token 放进 header」就消失），
+    /// 且启发式规则有误报，静默丢弃的代价大于标记。
     #[default]
+    Flag,
+    /// 识别为敏感内容后不入库。
     Ignore,
     /// 脱敏后入库。
     Mask,
@@ -96,21 +101,16 @@ pub struct HotkeyConfig {
     /// 粘贴堆栈顶。
     #[serde(default = "default_stack_paste_hotkey")]
     pub stack_paste: String,
-    /// 唤起快捷回复选择器（现场回贴，不经过主窗口）。
-    #[serde(default = "default_reply_hotkey")]
-    pub reply_picker: String,
 }
 
-fn default_toggle_hotkey() -> String {
-    "Control+C".to_string()
+pub(crate) fn default_toggle_hotkey() -> String {
+    // 不用 Control+C：它会抢走终端的 SIGINT（评审 R03），且 macOS 不把 Fn 当
+    // 普通修饰键（fn+z 无法注册），⌃⌥C 冲突概率低、单手可按。
+    "Control+Option+C".to_string()
 }
 
 fn default_stack_paste_hotkey() -> String {
     "Control+Shift+V".to_string()
-}
-
-fn default_reply_hotkey() -> String {
-    "Control+Shift+R".to_string()
 }
 
 impl Default for HotkeyConfig {
@@ -118,7 +118,6 @@ impl Default for HotkeyConfig {
         Self {
             toggle: default_toggle_hotkey(),
             stack_paste: default_stack_paste_hotkey(),
-            reply_picker: default_reply_hotkey(),
         }
     }
 }
@@ -143,9 +142,13 @@ pub struct RingProfile {
     /// 普通 / 混合兜底（决定匹配优先级，见 `docs/REA-Filee-Ring-Integrated.md` §2.2）。
     #[serde(default)]
     pub kind: RingProfileKind,
-    /// 唯一一面的预设顺序：索引 0 在 12 点，顺时针，最多 12 条。
+    /// 正面预设顺序：索引 0 在 12 点，顺时针。
     #[serde(default)]
     pub preset_ids: Vec<String>,
+    /// 【已废弃】旧版背面预设顺序：背面已取消，`Config::migrate` 会并入
+    /// `preset_ids` 并清空，此后恒为空。保留字段只是为了让旧配置能反序列化。
+    #[serde(default)]
+    pub back_ids: Vec<String>,
 }
 
 /// Profile 类型：决定选择顺序里的优先级。
@@ -159,27 +162,36 @@ pub enum RingProfileKind {
     MixedFallback,
 }
 
-/// 每个 Profile 最多几个扇区（Filee `ToolbarProfile.MaxSlices`）。
-pub const MAX_PROFILE_SLICES: usize = 12;
+/// 每个 Profile 最多几个扇区（Filee `ToolbarProfile.MaxSlices`；不含运行时
+/// 追加在末尾的工具动作，见 [`RingConfig::utility_actions`]）。
+pub const MAX_PROFILE_SLICES: usize = 16;
 
 impl RingProfile {
-    /// 出厂 Profile：图片 / 文本 / 混合兜底。
+    /// 出厂 Profile：图片 / 文本 / 文档 / 混合兜底，全部只有正面（背面已取消）。
     ///
-    /// `merged` 是旧版正背面合并后的顺序（迁移）或默认顺序；每个 Profile 只拿
-    /// 自己类别的那几条，顺序仍然跟随 `merged`，用户原来的偏好不会被打乱。
+    /// `merged` 是旧版正背面合并后的顺序（迁移）或默认顺序；每张盘按自己的
+    /// 类别表（内置 id 表 + 自建预设按目标格式归类）从 `merged` 里取交集，
+    /// 顺序仍然跟随 `merged`，用户原来的偏好不会被打乱。
     fn seeds(merged: &[String], presets: &[ConversionPreset]) -> Vec<RingProfile> {
-        let images: Vec<String> = merged
-            .iter()
-            .filter(|id| is_image_preset(presets, id))
-            .cloned()
-            .collect();
-        let texts: Vec<String> = merged
-            .iter()
-            .filter(|id| !is_image_preset(presets, id))
-            .cloned()
-            .collect();
-
+        let pick = |table: &[&str], is_kind: fn(&ConversionPreset) -> bool| -> Vec<String> {
+            merged
+                .iter()
+                .filter(|id| {
+                    table.contains(&id.as_str())
+                        || presets
+                            .iter()
+                            .find(|p| p.id == **id)
+                            .map(is_kind)
+                            .unwrap_or(false)
+                })
+                .cloned()
+                .take(MAX_PROFILE_SLICES)
+                .collect()
+        };
         let mut out = Vec::new();
+        let images = pick(&preset::DEFAULT_IMAGES, target_is_image);
+        let texts = pick(&preset::DEFAULT_TEXT, target_is_text);
+        let docs = pick(&preset::DEFAULT_DOCS, target_is_document);
         if !images.is_empty() {
             out.push(RingProfile {
                 id: "images".to_string(),
@@ -187,6 +199,7 @@ impl RingProfile {
                 extensions: image_extensions(),
                 kind: RingProfileKind::Normal,
                 preset_ids: images,
+                back_ids: Vec::new(),
             });
         }
         if !texts.is_empty() {
@@ -196,6 +209,17 @@ impl RingProfile {
                 extensions: text_extensions(),
                 kind: RingProfileKind::Normal,
                 preset_ids: texts,
+                back_ids: Vec::new(),
+            });
+        }
+        if !docs.is_empty() {
+            out.push(RingProfile {
+                id: "docs".to_string(),
+                name: "文档".to_string(),
+                extensions: docs_extensions(),
+                kind: RingProfileKind::Normal,
+                preset_ids: docs,
+                back_ids: Vec::new(),
             });
         }
         // 至少留一个 catch-all：没配过的类型也要有盘可拖（§2.2 末条）。
@@ -205,44 +229,134 @@ impl RingProfile {
             extensions: Vec::new(),
             kind: RingProfileKind::MixedFallback,
             preset_ids: merged.iter().take(MAX_PROFILE_SLICES).cloned().collect(),
+            back_ids: Vec::new(),
+        });
+        out
+    }
+
+    /// 全新出厂盘：内容按类别表原样（不经过 `merged` 顺序）。
+    fn stock() -> Vec<RingProfile> {
+        let mut out = Vec::new();
+        for (id, name, exts) in [
+            ("images", "图片", image_extensions()),
+            ("text", "文本", text_extensions()),
+            ("docs", "文档", docs_extensions()),
+        ] {
+            out.push(RingProfile {
+                id: id.to_string(),
+                name: name.to_string(),
+                extensions: exts,
+                kind: RingProfileKind::Normal,
+                preset_ids: stock_content(id),
+                back_ids: Vec::new(),
+            });
+        }
+        out.push(RingProfile {
+            id: "mixed".to_string(),
+            name: "其他文件".to_string(),
+            extensions: Vec::new(),
+            kind: RingProfileKind::MixedFallback,
+            preset_ids: stock_content("mixed"),
+            back_ids: Vec::new(),
         });
         out
     }
 }
 
-/// 预设是否产出图片（目标为图片格式，或「同格式重编码」）。
-fn is_image_preset(presets: &[ConversionPreset], id: &str) -> bool {
-    match presets.iter().find(|p| p.id == id).map(|p| &p.target) {
-        Some(preset::TargetSpec::Explicit(format)) => format.is_image(),
-        // SameAsSource 只会出现在图片（重编码）上，按图片归类。
-        Some(preset::TargetSpec::SameAsSource) => true,
-        None => false,
+/// 出厂盘正面内容（id → 预设列表）。
+fn stock_content(id: &str) -> Vec<String> {
+    match id {
+        "images" => preset::DEFAULT_IMAGES.iter().map(|s| s.to_string()).collect(),
+        "text" => preset::DEFAULT_TEXT.iter().map(|s| s.to_string()).collect(),
+        "docs" => preset::DEFAULT_DOCS.iter().map(|s| s.to_string()).collect(),
+        "mixed" => preset::default_mixed_actions(),
+        _ => Vec::new(),
     }
+}
+
+/// 预设目标是否图片（自建预设按目标归类进图片盘；动作类预设不算）。
+fn target_is_image(p: &ConversionPreset) -> bool {
+    if !p.kind.is_convert() {
+        return false;
+    }
+    match &p.target {
+        preset::TargetSpec::Explicit(format) => format.is_image(),
+        // SameAsSource 只会出现在图片（重编码）上，按图片归类。
+        preset::TargetSpec::SameAsSource => true,
+    }
+}
+
+/// 预设目标是否文本（html / txt）。
+fn target_is_text(p: &ConversionPreset) -> bool {
+    if !p.kind.is_convert() {
+        return false;
+    }
+    matches!(&p.target, preset::TargetSpec::Explicit(f) if f.is_text())
+}
+
+/// 预设目标是否文档（pdf / docx）。
+fn target_is_document(p: &ConversionPreset) -> bool {
+    if !p.kind.is_convert() {
+        return false;
+    }
+    matches!(&p.target, preset::TargetSpec::Explicit(f) if f.is_document())
+}
+
+/// 背面并入正面（背面已取消）：去重、截断到扇区上限、清空背面。
+fn merge_back_into_front(profile: &mut RingProfile) {
+    let mut front = std::mem::take(&mut profile.preset_ids);
+    for id in std::mem::take(&mut profile.back_ids) {
+        if !front.contains(&id) {
+            front.push(id);
+        }
+    }
+    front.truncate(MAX_PROFILE_SLICES);
+    profile.preset_ids = front;
 }
 
 /// 图片族的全部扩展名（含别名，与 `ConvertFormat::from_ext` 同一张表）。
 fn image_extensions() -> Vec<String> {
-    ["png", "jpg", "jpeg", "jpe", "webp", "gif", "bmp", "tif", "tiff"]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
-}
-
-/// 文本族的全部扩展名。
-fn text_extensions() -> Vec<String> {
     [
-        "md", "markdown", "mdown", "mkd", "html", "htm", "xhtml", "txt", "text",
+        "png", "jpg", "jpeg", "jpe", "webp", "gif", "bmp", "tif", "tiff", "heic", "heif", "hif",
     ]
     .into_iter()
     .map(str::to_string)
     .collect()
 }
 
+/// 文本族的全部扩展名。
+fn text_extensions() -> Vec<String> {
+    ["html", "htm", "xhtml", "txt", "text"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+/// 文档族的全部扩展名（PDF / Word）。
+fn docs_extensions() -> Vec<String> {
+    ["pdf", "docx", "docm", "dotx"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+/// 出厂盘的扩展名表（一次性迁移用它刷新旧配置；`None` = 非出厂盘，不动）。
+pub(crate) fn stock_extensions(id: &str) -> Option<Vec<String>> {
+    match id {
+        "images" => Some(image_extensions()),
+        "text" => Some(text_extensions()),
+        "docs" => Some(docs_extensions()),
+        "mixed" => Some(Vec::new()),
+        _ => None,
+    }
+}
+
 /// 环形转换配置（`设置 → 环形转换`）。
 ///
-/// 只有**一个运行手势**（Finder 里 Option＋左键拖动）与**一面环**：正背面、
+/// 只有**一个运行手势**（Finder 里 Option＋左键拖动）与**一面环**：背面、
 /// Tab/滚轮翻面、单击执行、快捷键与右键服务入口全部取消（见
-/// `docs/REA-Filee-Ring-Integrated.md`）。
+/// `docs/REA-Filee-Ring-Integrated.md`）。打包 / 解压 / PDF 分页等工具动作
+/// 不进 Profile，运行时按固定顺序追加在正面末尾（见 `utility_actions`）。
 ///
 /// **动作 id 是预设 id，不是目标格式名**；配方本身（目标、质量、输出规则）在
 /// [`ConversionConfig`] 里，两个 JPG 动作因此可以有不同质量。
@@ -251,6 +365,9 @@ pub struct RingConfig {
     /// 文件类型 Profile 列表（顺序即匹配优先级）。
     #[serde(default)]
     pub profiles: Vec<RingProfile>,
+    /// 每张盘正面末尾是否追加工具动作（打包 / 解压 / PDF 分页，固定顺序）。
+    #[serde(default = "default_true")]
+    pub utility_actions: bool,
     /// Finder 里 Option + 拖动文件唤起环形盘（macOS）。
     ///
     /// 只在**前台是 Finder**时生效，且位移要超过 8px 才接管（Option+单击不弹盘）：
@@ -296,24 +413,13 @@ impl ConversionConfig {
     }
 }
 
-/// 默认正面顺序：常用目标在前（每面最多 12 个，Filee `MaxSlices`）。
-#[allow(dead_code)]
-fn default_ring_actions() -> Vec<String> {
-    preset::default_front_actions()
-}
-
-/// 默认背面顺序：只用于迁移旧配置（背面本身已取消）。
-#[allow(dead_code)]
-fn default_ring_back_actions() -> Vec<String> {
-    preset::default_back_actions()
-}
-
 impl Default for RingConfig {
     fn default() -> Self {
         Self {
             // 默认 Profile 在 `migrate` 里按预设类别生成（需要预设库才能判断
             // 目标格式），这里留空，避免两份默认值各写一遍。
             profiles: Vec::new(),
+            utility_actions: default_true(),
             option_tap: default_true(),
             last_action: Vec::new(),
             legacy_actions: None,
@@ -465,7 +571,7 @@ impl Default for Config {
             max_bytes: default_max_bytes(),
             monitor_enabled: true,
             poll_interval_ms: default_poll_interval(),
-            sensitivity: SensitivityPolicy::Ignore,
+            sensitivity: SensitivityPolicy::Flag,
             hotkeys: HotkeyConfig::default(),
             sync: SyncConfig::default(),
             launch_at_login: false,
@@ -496,8 +602,7 @@ impl Config {
     ///
     /// 处理三件事，处理完把旧字段清空，因此**可重复调用**：
     /// 1. 预设库为空 → 补内置预设；
-    /// 2. 旧的全局 `ring.jpeg_quality` → 只写进 `img.jpg` 这一条配方
-    ///    （`img.jpg.q70` 是另一条配方，不能被顺手改成全局质量）；
+    /// 2. 旧的全局 `ring.jpeg_quality` → 只写进 `img.jpg` 这一条配方；
     /// 3. 旧的全局 `ring.dest_dir` → 所有还没设输出目录的预设。
     ///
     /// 另外把旧的裸格式 id（`"jpg"`）重写成预设 id（`"img.jpg"`）：圆环顺序表
@@ -511,6 +616,22 @@ impl Config {
         // 去重：以先出现的为准，避免 UI 里两条同 id 的配方互相覆盖。
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         presets.retain(|p| !p.id.trim().is_empty() && seen.insert(p.id.clone()));
+
+        // 本版删掉了用不到的格式：内置预设只保留当前仍提供的 id，用户自建的
+        // （builtin = false）一律保留。删掉的内置 id 不会再被下面的补全逻辑复活。
+        presets.retain(|p| !p.builtin || preset::BUILTIN_IDS.contains(&p.id.as_str()));
+
+        // 版本升级：本版新增的内置预设补进用户库（新增格式的动作才可选）。
+        // 旧版内置 id 缺席视为用户删过，不复活。
+        for builtin in preset::builtin_presets() {
+            if seen.contains(&builtin.id)
+                || preset::LEGACY_BUILTIN_IDS.contains(&builtin.id.as_str())
+            {
+                continue;
+            }
+            seen.insert(builtin.id.clone());
+            presets.push(builtin);
+        }
 
         if let Some(quality) = self.ring.legacy_jpeg_quality.take() {
             let quality = quality.clamp(1, 100);
@@ -532,8 +653,11 @@ impl Config {
             }
         }
 
-        // 旧「正 / 背面」→ 文件类型 Profile（总规范 §8.1）：正面保持原顺序作为主环，
-        // 背面追加在后并去重，超过 12 项的部分**留在预设库**（不删配方，只是不上环）。
+        // 旧「正 / 背面」→ 文件类型 Profile（总规范 §8.1）。
+        //
+        // 背面已取消：从未自订过的旧默认布局（含上一版正面 5 项 + 背面 7 项）
+        // 直接升级到新的正面默认（新增格式、文档目标全部开箱可见）；用户自己
+        // 排过的旧配置保持合并后的顺序，只做「背面追加到正面」的去重合并。
         if self.ring.profiles.is_empty() {
             let mut front = self
                 .ring
@@ -544,32 +668,75 @@ impl Config {
                 .ring
                 .legacy_back_actions
                 .take()
-                .unwrap_or_else(preset::default_back_actions);
+                .unwrap_or_else(|| prev_default_back().to_vec());
             normalize_ring_list(&mut front, &mut presets, true);
             normalize_ring_list(&mut back, &mut presets, false);
 
             // 旧默认布局把 `doc.md` 放到了背面：选一个 `.txt` 时正面只剩 HTML（图片
             // 预设对 txt 无路由，txt 本身又是目标），盘上看着就像只剩一个动作。只在
-            // 顺序「完全等于旧默认」时升级，用户自己排过的顺序一律不动。
-            if front == LEGACY_DEFAULT_FRONT && back == LEGACY_DEFAULT_BACK {
-                front = preset::default_front_actions();
-                back = preset::default_back_actions();
+            // 顺序「完全等于旧默认（或上一版默认）」时升级，用户自己排过的顺序一律不动。
+            let untouched_default = (front == kept(&LEGACY_DEFAULT_FRONT)
+                && back == kept(&LEGACY_DEFAULT_BACK))
+                || (front == kept(&PREV_DEFAULT_FRONT) && back == kept(&PREV_DEFAULT_BACK))
+                // 全新配置（旧字段缺省）：正面/背面恰好是两版默认值，按出厂盘建。
+                || (front == preset::default_front_actions()
+                    && back == kept(&PREV_DEFAULT_BACK));
+            if untouched_default {
+                self.ring.profiles = RingProfile::stock();
+            } else {
+                let mut merged = front;
+                for id in &back {
+                    if !merged.contains(id) {
+                        merged.push(id.clone());
+                    }
+                }
+                merged.truncate(MAX_PROFILE_SLICES);
+                self.ring.profiles = RingProfile::seeds(&merged, &presets);
             }
-
-            let mut merged = front;
-            for id in back {
-                if !merged.contains(&id) {
-                    merged.push(id);
+        } else {
+            // 已经建过 Profile 的旧配置（上一版曾把正/背面拆成两张盘）。
+            //
+            // 背面并入正面（去重、截断），没动过的出厂盘升级到新的正面默认，
+            // 让新增格式开箱可见；用户自己排过的盘一律不动。
+            for profile in &mut self.ring.profiles {
+                if is_untouched_stock(profile) {
+                    profile.preset_ids = stock_content(&profile.id);
+                    profile.back_ids.clear();
+                } else {
+                    merge_back_into_front(profile);
                 }
             }
-            merged.truncate(MAX_PROFILE_SLICES);
-            self.ring.profiles = RingProfile::seeds(&merged, &presets);
-        } else {
-            // 已经有 Profile（部分迁移过、或用户自建）：旧字段只清不读。
             self.ring.legacy_actions = None;
             self.ring.legacy_back_actions = None;
         }
         normalize_profiles(&mut self.ring.profiles, &mut presets);
+
+        // 恰好是出厂三盘（没有自建盘）→ 补「文档」盘：新盘没有旧数据可保留，
+        // 直接按默认内容建。位置放在混合兜底之前，保证匹配优先级正确。
+        let ids: std::collections::HashSet<&str> = self
+            .ring
+            .profiles
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        if ids.len() == 3 && ids.contains("images") && ids.contains("text") && ids.contains("mixed")
+        {
+            let docs = RingProfile {
+                id: "docs".to_string(),
+                name: "文档".to_string(),
+                extensions: docs_extensions(),
+                kind: RingProfileKind::Normal,
+                preset_ids: stock_content("docs"),
+                back_ids: Vec::new(),
+            };
+            let pos = self
+                .ring
+                .profiles
+                .iter()
+                .position(|p| p.kind == RingProfileKind::MixedFallback)
+                .unwrap_or(self.ring.profiles.len());
+            self.ring.profiles.insert(pos, docs);
+        }
 
         let mut last = Vec::with_capacity(self.ring.last_action.len());
         for (category, raw) in self.ring.last_action.iter() {
@@ -602,6 +769,74 @@ impl Config {
 /// 迁移前（按格式名映射后）的默认布局：用来识别「从未自订过」的配置。
 const LEGACY_DEFAULT_FRONT: [&str; 5] = ["img.jpg", "img.png", "img.webp", "doc.html", "doc.txt"];
 const LEGACY_DEFAULT_BACK: [&str; 4] = ["img.gif", "img.bmp", "img.tiff", "doc.md"];
+
+/// 上一版（带背面的版本）出厂布局：正 / 背面都恰好没动过时，升级到新正面默认。
+const PREV_DEFAULT_FRONT: [&str; 5] = ["img.jpg", "img.png", "doc.md", "doc.html", "doc.txt"];
+const PREV_DEFAULT_BACK: [&str; 7] = [
+    "img.webp",
+    "img.gif",
+    "img.bmp",
+    "img.tiff",
+    "img.heic",
+    "img.avif",
+    "img.ico",
+];
+
+/// 旧配置没有 `back_actions` 字段时按上一版默认背面处理（保持旧行为：
+/// 缺字段 = 没排过背面 = 用默认，而不是把背面清空）。
+fn prev_default_back() -> Vec<String> {
+    PREV_DEFAULT_BACK.iter().map(|s| s.to_string()).collect()
+}
+
+/// 把旧默认布局里的 id 过一遍「当前还能解析」的过滤：本版删掉的格式
+/// （doc.md / img.avif / img.ico 等）不再出现在比较列表里，否则老配置会被
+/// 误判成「用户自订过」，白白丢掉出厂盘升级。
+fn kept(ids: &[&str]) -> Vec<String> {
+    ids.iter()
+        .filter_map(|id| preset::resolve_action_id(id))
+        .collect()
+}
+
+/// 上一版出厂盘内容：用来识别「没动过」的盘，动过的一律不升级。
+const PREV_IMAGES_FRONT: [&str; 2] = ["img.jpg", "img.png"];
+const PREV_TEXT_FRONT: [&str; 3] = ["doc.md", "doc.html", "doc.txt"];
+const PREV_MIXED_FRONT: [&str; 12] = [
+    "img.jpg",
+    "img.png",
+    "doc.md",
+    "doc.html",
+    "doc.txt",
+    "img.webp",
+    "img.gif",
+    "img.bmp",
+    "img.tiff",
+    "img.heic",
+    "img.avif",
+    "img.ico",
+];
+/// 更早一版（合并单面）的图片盘正面。
+const LEGACY_MERGED_IMAGES: [&str; 6] =
+    ["img.jpg", "img.png", "img.webp", "img.gif", "img.bmp", "img.tiff"];
+
+/// 出厂盘是否「从没被用户动过」（正面 / 背面恰等于上一版默认内容）。
+///
+/// 混合兜底兼容两版：12 项（上一版正面+背面）与 9 项（更早一版，没有
+/// heic/avif/ico）。
+fn is_untouched_stock(profile: &RingProfile) -> bool {
+    match profile.id.as_str() {
+        "images" => {
+            (profile.preset_ids == PREV_IMAGES_FRONT && profile.back_ids == PREV_DEFAULT_BACK)
+                || (profile.preset_ids == LEGACY_MERGED_IMAGES && profile.back_ids.is_empty())
+        }
+        "text" => profile.preset_ids == PREV_TEXT_FRONT && profile.back_ids.is_empty(),
+        "mixed" => {
+            profile.back_ids.is_empty()
+                && (profile.preset_ids == PREV_MIXED_FRONT
+                    || profile.preset_ids == PREV_MIXED_FRONT[..9])
+        }
+        _ => false,
+    }
+}
 
 /// 把一张圆环顺序表归一到「已存在的预设 id」，并按需补回内置预设。
 fn normalize_ring_list(
@@ -667,6 +902,8 @@ fn normalize_profiles(profiles: &mut Vec<RingProfile>, presets: &mut Vec<Convers
         // 指向已删预设的引用丢掉（总规范 §1.1：不允许悬空 id）。
         normalize_ring_list(&mut profile.preset_ids, presets, false);
         profile.preset_ids.truncate(MAX_PROFILE_SLICES);
+        // 背面已取消：任何残留的背面顺序直接清掉（迁移阶段已并入正面）。
+        profile.back_ids.clear();
         out.push(profile);
     }
 
@@ -681,21 +918,15 @@ fn normalize_profiles(profiles: &mut Vec<RingProfile>, presets: &mut Vec<Convers
             name: "其他文件".to_string(),
             extensions: Vec::new(),
             kind: RingProfileKind::MixedFallback,
-            preset_ids: preset::default_front_actions(),
+            preset_ids: preset::default_mixed_actions(),
+            back_ids: Vec::new(),
         });
     }
 
-    // 所有 Profile 都空了（预设被删光 / 引用全失效）→ 用出厂顺序补回，
+    // 所有 Profile 都空了（预设被删光 / 引用全失效）→ 用出厂盘补回，
     // 宁可回到默认盘，也不能让一处配置坏掉就把整个功能变成空盘。
     if out.iter().all(|p| p.preset_ids.is_empty()) {
-        let mut merged = preset::default_front_actions();
-        for id in preset::default_back_actions() {
-            if !merged.contains(&id) {
-                merged.push(id);
-            }
-        }
-        merged.truncate(MAX_PROFILE_SLICES);
-        *profiles = RingProfile::seeds(&merged, presets);
+        *profiles = RingProfile::stock();
         return;
     }
     *profiles = out;
@@ -726,6 +957,43 @@ fn ensure_preset(id: &str, presets: &mut Vec<ConversionPreset>) {
 mod tests {
     use super::*;
 
+    fn list(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// 出厂盘共同断言：图片 6 / 文本 2 / 文档 6 / 兜底，全部没有背面。
+    fn assert_stock_profiles(config: &Config) {
+        let images = profile_by_id(config, "images").expect("图片 Profile");
+        assert_eq!(
+            images.preset_ids,
+            preset::DEFAULT_IMAGES.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
+        assert!(images.back_ids.is_empty());
+        assert!(images.preset_ids.len() <= MAX_PROFILE_SLICES);
+
+        let text = profile_by_id(config, "text").expect("文本 Profile");
+        assert_eq!(
+            text.preset_ids,
+            preset::DEFAULT_TEXT.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
+        assert!(text.back_ids.is_empty());
+
+        let docs = profile_by_id(config, "docs").expect("文档 Profile");
+        assert_eq!(
+            docs.preset_ids,
+            preset::DEFAULT_DOCS.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(docs.extensions, docs_extensions());
+        assert!(docs.back_ids.is_empty());
+
+        let mixed = profile_by_id(config, "mixed").expect("混合兜底");
+        assert_eq!(mixed.kind, RingProfileKind::MixedFallback);
+        assert_eq!(mixed.preset_ids, preset::default_mixed_actions());
+        assert!(mixed.back_ids.is_empty());
+        // 兜底必须排在最后（匹配优先级）。
+        assert_eq!(config.ring.profiles.last().map(|p| p.id.as_str()), Some("mixed"));
+    }
+
     /// 旧版配置（格式名动作 + 全局质量/目录）能完整升级到 Profile 模型。
     #[test]
     fn migrate_maps_legacy_ids_quality_and_dir() {
@@ -744,21 +1012,16 @@ mod tests {
         config.migrate();
 
         // 旧背面取消：`gif` 追加到合并顺序末尾，并按类别拆进图片盘。
+        // `md` 已从本版删除，解析不出预设 → 被丢弃，文本盘因此为空、不创建。
         let images = profile_by_id(&config, "images").expect("图片 Profile");
-        assert_eq!(
-            images.preset_ids,
-            vec!["img.jpg", "img.png", "img.gif"]
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        );
-        let text = profile_by_id(&config, "text").expect("文本 Profile");
-        assert_eq!(text.preset_ids, vec!["doc.md".to_string()]);
+        assert_eq!(images.preset_ids, list(&["img.jpg", "img.png", "img.gif"]));
+        assert!(images.back_ids.is_empty());
+        assert!(profile_by_id(&config, "text").is_none());
         // 最后一个必须是 catch-all，否则没配过的类型没有盘可拖。
         let mixed = config.ring.profiles.last().expect("至少一个 Profile");
         assert_eq!(mixed.kind, RingProfileKind::MixedFallback);
         assert!(mixed.extensions.is_empty());
-        assert_eq!(mixed.preset_ids.len(), 4);
+        assert_eq!(mixed.preset_ids.len(), 3);
 
         assert_eq!(
             config.ring.last_action,
@@ -779,14 +1042,8 @@ mod tests {
         assert_eq!(jpg.name, "JPG 62%");
         assert_eq!(jpg.output.dir, "/tmp/out");
 
-        // 另一条 JPG 配方（70%）不能被全局质量顺手改掉——这正是旧模型做不到的事。
-        let q70 = config
-            .conversion
-            .presets
-            .iter()
-            .find(|p| p.id == "img.jpg.q70")
-            .expect("img.jpg.q70 应存在");
-        assert_eq!(q70.image.jpeg_quality, 70);
+        // 已删除格式的内置预设不再留在库里，避免 UI 出现选不了的扇区。
+        assert!(!config.conversion.presets.iter().any(|p| p.id == "doc.md"));
     }
 
     /// 迁移可以重复跑：第二遍不再改变任何东西，旧字段也不会重新出现在 JSON 里。
@@ -800,6 +1057,7 @@ mod tests {
             id: "preset-mine".to_string(),
             name: "我的配方".to_string(),
             target: preset::TargetSpec::Explicit(ConvertFormat::Webp),
+            builtin: false,
             ..preset::builtin_presets()
                 .into_iter()
                 .next()
@@ -807,16 +1065,23 @@ mod tests {
         });
 
         config.migrate();
-        // 未知的自定义预设 id 必须保住；旧格式名换成预设 id；背面缺省时取旧默认
-        // 背面，拼在正面之后（§8.1：正面在前 + 背面追加去重）。
+        // 未知的自定义预设 id 必须保住；旧格式名换成预设 id；背面缺省时取上一版
+        // 默认背面，拼在正面之后（§8.1：正面在前 + 背面追加去重）。已删除格式
+        // 的背面项（avif / ico）被丢掉。
         let images = profile_by_id(&config, "images").expect("图片 Profile");
         assert_eq!(
             images.preset_ids,
-            vec!["img.jpg", "preset-mine", "img.webp", "img.gif", "img.bmp", "img.tiff"]
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>()
+            list(&[
+                "img.jpg",
+                "preset-mine",
+                "img.webp",
+                "img.gif",
+                "img.bmp",
+                "img.tiff",
+                "img.heic",
+            ])
         );
+        assert!(images.back_ids.is_empty());
         assert_eq!(
             config
                 .conversion
@@ -837,7 +1102,7 @@ mod tests {
         assert!(once["ring"].get("back_actions").is_none());
     }
 
-    /// 从未自订过的旧默认布局会被升级（否则选 .txt 时正面只剩 HTML）。
+    /// 从未自订过的旧默认布局（格式名）会升级成全新出厂盘。
     #[test]
     fn migrate_upgrades_untouched_default_layout() {
         let mut config: Config = serde_json::from_value(serde_json::json!({
@@ -850,23 +1115,32 @@ mod tests {
 
         config.migrate();
 
-        // 升级后文档目标全在文本盘：txt / md 都能看到两个以上动作。
-        let text = profile_by_id(&config, "text").expect("文本 Profile");
-        assert_eq!(
-            text.preset_ids,
-            vec!["doc.md", "doc.html", "doc.txt"]
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        );
-        let images = profile_by_id(&config, "images").expect("图片 Profile");
-        assert_eq!(
-            images.preset_ids,
-            vec!["img.jpg", "img.png", "img.webp", "img.gif", "img.bmp", "img.tiff"]
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        );
+        // 升级后直接是新出厂盘：新增格式、文档目标全部开箱可见。
+        assert_stock_profiles(&config);
+    }
+
+    /// 上一版（预设 id）的默认布局同样升级成出厂盘。
+    #[test]
+    fn migrate_upgrades_untouched_preset_id_default() {
+        let mut config: Config = serde_json::from_value(serde_json::json!({
+            "ring": {
+                "actions": ["img.jpg", "img.png", "img.webp", "doc.html", "doc.txt"],
+                "back_actions": ["img.gif", "img.bmp", "img.tiff", "doc.md"]
+            }
+        }))
+        .expect("默认布局应能反序列化");
+
+        config.migrate();
+
+        assert_stock_profiles(&config);
+    }
+
+    /// 全新配置（没有任何旧字段）直接得到出厂盘，而不是「自定义」降级盘。
+    #[test]
+    fn migrate_builds_stock_profiles_for_fresh_config() {
+        let mut config = Config::default();
+        config.migrate();
+        assert_stock_profiles(&config);
     }
 
     /// 用户自己排过的顺序不能被「默认升级」冲掉。
@@ -880,18 +1154,15 @@ mod tests {
         config.migrate();
 
         let text = profile_by_id(&config, "text").expect("文本 Profile");
-        assert_eq!(
-            text.preset_ids,
-            vec!["doc.txt", "doc.html"]
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(text.preset_ids, list(&["doc.txt", "doc.html"]));
         // 用户没配图片：不该凭空多出一个空的图片 Profile。
         assert!(profile_by_id(&config, "images").is_none());
+        // 文档盘：有文档目标动作就建（PDF → TXT / HTML）。
+        let docs = profile_by_id(&config, "docs").expect("文档 Profile");
+        assert_eq!(docs.preset_ids, list(&["doc.txt", "doc.html"]));
     }
 
-    /// 指向已删预设的引用、重复 id、非法扩展名都在迁移时清掉。
+    /// 指向已删预设的引用、重复 id、非法扩展名都在迁移时清掉；背面并入正面。
     #[test]
     fn migrate_repairs_dangling_profile_references() {
         let mut config = Config::default();
@@ -906,6 +1177,7 @@ mod tests {
                     "preset-gone".to_string(),
                     "img.jpg".to_string(),
                 ],
+                back_ids: vec!["preset-gone".to_string(), "img.jpg".to_string()],
             },
             RingProfile {
                 id: "custom".to_string(),
@@ -913,6 +1185,7 @@ mod tests {
                 extensions: Vec::new(),
                 kind: RingProfileKind::MixedFallback,
                 preset_ids: vec!["doc.md".to_string()],
+                back_ids: Vec::new(),
             },
         ];
 
@@ -922,7 +1195,9 @@ mod tests {
         let first = &config.ring.profiles[0];
         assert_eq!(first.name, "custom", "空名字回落到 id");
         assert_eq!(first.extensions, vec!["png".to_string()]);
+        // 背面已取消：`img.jpg` 已在正面，不重复出现；悬空引用清掉。
         assert_eq!(first.preset_ids, vec!["img.jpg".to_string()]);
+        assert_eq!(first.back_ids, Vec::<String>::new());
         // 原有的 MixedFallback 被同 id 丢掉 → 自动补一个 catch-all。
         let mixed = config.ring.profiles.last().expect("兜底 Profile");
         assert_eq!(mixed.kind, RingProfileKind::MixedFallback);
@@ -930,7 +1205,184 @@ mod tests {
         assert!(!mixed.preset_ids.is_empty());
     }
 
+    /// 用户定制过的旧布局：正面保持合并顺序，不升级、不臆测内容。
+    #[test]
+    fn migrate_leaves_custom_legacy_layout() {
+        let mut config: Config = serde_json::from_value(serde_json::json!({
+            "ring": {
+                "actions": ["img.jpg", "img.gif", "doc.html"],
+                "back_actions": ["img.png", "doc.md"]
+            }
+        }))
+        .expect("定制布局应能反序列化");
+
+        config.migrate();
+
+        let images = profile_by_id(&config, "images").expect("图片 Profile");
+        assert_eq!(images.preset_ids, list(&["img.jpg", "img.gif", "img.png"]));
+        assert!(images.back_ids.is_empty(), "定制布局不臆测背面");
+        let text = profile_by_id(&config, "text").expect("文本 Profile");
+        assert_eq!(text.preset_ids, list(&["doc.html"]));
+        // 文档盘收文档目标（含 PDF → 图片的 img.jpg / img.png，顺序跟随合并表）。
+        let docs = profile_by_id(&config, "docs").expect("文档 Profile");
+        assert_eq!(docs.preset_ids, list(&["img.jpg", "doc.html", "img.png"]));
+    }
+
+    /// 上一版拆成两面的默认盘：没动过的盘升级到新正面默认，动过的盘保持原样；
+    /// 恰好是出厂三盘时补上「文档」盘。迁移幂等。
+    #[test]
+    fn migrate_upgrades_untouched_profiles_and_adds_docs() {
+        let mut config: Config = serde_json::from_value(serde_json::json!({
+            "ring": {
+                "profiles": [
+                    {
+                        "id": "images",
+                        "name": "图片",
+                        "extensions": ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"],
+                        "kind": "normal",
+                        "preset_ids": ["img.jpg", "img.png"],
+                        "back_ids": ["img.webp", "img.gif", "img.bmp", "img.tiff", "img.heic", "img.avif", "img.ico"]
+                    },
+                    {
+                        "id": "text",
+                        "name": "文本",
+                        "extensions": ["md", "html", "txt"],
+                        "kind": "normal",
+                        "preset_ids": ["doc.html", "doc.txt"]
+                    }
+                ]
+            }
+        }))
+        .expect("上一版两面配置应能反序列化");
+
+        config.migrate();
+
+        // 图片盘没动过 → 升级到 14 项新默认（含新增格式与 img.pdf）。
+        let images = profile_by_id(&config, "images").expect("图片 Profile");
+        assert_eq!(
+            images.preset_ids,
+            preset::DEFAULT_IMAGES.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
+        assert!(images.back_ids.is_empty());
+
+        // 用户动过的文本盘（删过 doc.md）：保持原样，不补不升级。
+        let text = profile_by_id(&config, "text").expect("文本 Profile");
+        assert_eq!(text.preset_ids, list(&["doc.html", "doc.txt"]));
+        assert!(text.back_ids.is_empty());
+
+        // 三张出厂盘齐全 → 补「文档」盘，且排在兜底之前。
+        let docs = profile_by_id(&config, "docs").expect("文档 Profile");
+        assert_eq!(
+            docs.preset_ids,
+            preset::DEFAULT_DOCS.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(config.ring.profiles.last().map(|p| p.id.as_str()), Some("mixed"));
+
+        // 幂等：再跑一次不重复升级、不重复补盘。
+        let once = serde_json::to_value(&config).expect("序列化");
+        config.migrate();
+        let twice = serde_json::to_value(&config).expect("序列化");
+        assert_eq!(once, twice);
+        assert_eq!(
+            profile_by_id(&config, "docs").expect("文档 Profile").preset_ids.len(),
+            preset::DEFAULT_DOCS.len()
+        );
+    }
+
+    /// 用户动过的两面布局（删过背面一项）：背面并入正面，不自动补回新增格式。
+    #[test]
+    fn migrate_merges_custom_split_without_upgrade() {
+        let mut config: Config = serde_json::from_value(serde_json::json!({
+            "ring": {
+                "profiles": [
+                    {
+                        "id": "images",
+                        "name": "图片",
+                        "extensions": ["png", "jpg", "jpeg"],
+                        "kind": "normal",
+                        "preset_ids": ["img.jpg", "img.png"],
+                        "back_ids": ["img.webp", "img.gif", "img.bmp"]
+                    }
+                ]
+            }
+        }))
+        .expect("定制两面配置应能反序列化");
+
+        config.migrate();
+
+        let images = profile_by_id(&config, "images").expect("图片 Profile");
+        assert_eq!(
+            images.preset_ids,
+            list(&["img.jpg", "img.png", "img.webp", "img.gif", "img.bmp"])
+        );
+        assert!(images.back_ids.is_empty());
+        // 只有一张图片盘（不是出厂三盘）→ 不补文档盘。
+        assert!(profile_by_id(&config, "docs").is_none());
+    }
+
     fn profile_by_id<'a>(config: &'a Config, id: &str) -> Option<&'a RingProfile> {
         config.ring.profiles.iter().find(|p| p.id == id)
+    }
+
+    /// 版本升级：用户库里已删掉的旧内置预设不复活；本版删掉的格式预设会被
+    /// 清掉；缺失的工具动作补回来；自建预设原样保留。迁移幂等。
+    #[test]
+    fn migrate_prunes_removed_builtins_and_keeps_user_presets() {
+        let mut config = Config::default();
+        let mut presets = preset::builtin_presets();
+        // 旧库里指向已删格式的内置预设（配置反序列化前会被 JSON 层剪掉，
+        // 这里直接构造出等价状态验证迁移的兜底清理）。
+        let mut stale = presets
+            .iter()
+            .find(|p| p.id == "img.png")
+            .expect("img.png")
+            .clone();
+        stale.id = "doc.md".to_string();
+        stale.name = "Markdown".to_string();
+        presets.push(stale);
+        // 旧工具动作缺失 → 版本升级时补回。
+        presets.retain(|p| p.id != "act.extract");
+        // 用户删过的旧内置（doc.pdf）不复活。
+        presets.retain(|p| p.id != "doc.pdf");
+        presets.push(ConversionPreset {
+            id: "preset-mine".to_string(),
+            name: "我的配方".to_string(),
+            target: preset::TargetSpec::Explicit(ConvertFormat::Webp),
+            builtin: false,
+            ..preset::builtin_presets()
+                .into_iter()
+                .next()
+                .expect("内置预设不为空")
+        });
+        config.conversion.presets = presets;
+        // 自定义盘只引用 img.jpg：不能让出厂盘的 doc.pdf 引用把「用户删过的
+        // 预设」补回来（`normalize_profiles` 会 ensure 盘上引用的预设）。
+        config.ring.profiles = vec![RingProfile {
+            id: "images".to_string(),
+            name: "图片".to_string(),
+            extensions: vec!["png".to_string()],
+            kind: RingProfileKind::Normal,
+            preset_ids: vec!["img.jpg".to_string()],
+            back_ids: Vec::new(),
+        }];
+
+        config.migrate();
+
+        let ids: Vec<&str> = config
+            .conversion
+            .presets
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert!(!ids.contains(&"doc.md"), "已删除格式的内置预设必须清掉");
+        assert!(!ids.contains(&"img.jpg.q70"), "示范预设已从源码删除");
+        assert!(ids.contains(&"preset-mine"), "用户自建预设不能被连带删掉");
+        assert!(ids.contains(&"act.extract"), "缺失的新工具动作应补回");
+        assert!(!ids.contains(&"doc.pdf"), "用户删过的旧内置不复活");
+
+        // 幂等：再跑一次，数量不变。
+        let count = config.conversion.presets.len();
+        config.migrate();
+        assert_eq!(config.conversion.presets.len(), count);
     }
 }

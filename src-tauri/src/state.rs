@@ -10,7 +10,6 @@ use crate::core::clipboard::types::{hash_content, ClipContent, ClipEvent, ClipIt
 use crate::core::history::HistoryService;
 use crate::core::hotkey::HotkeyManager;
 use crate::core::paste::{PasteOutcome, PasteService};
-use crate::core::reply::ReplyService;
 use crate::core::sensitivity::SensitivityDetector;
 use crate::core::stack::{StackPasteAllResult, StackPasteEntry};
 use crate::core::ClipboardMonitor;
@@ -29,7 +28,6 @@ pub struct AppState {
     pub paste: PasteService,
     pub hotkey: HotkeyManager,
     pub stack: ClipboardStack,
-    pub reply: ReplyService,
     pub modules: ModuleHost,
     pub sync: SyncManager,
     pub sensitivity: SensitivityDetector,
@@ -161,15 +159,9 @@ impl AppState {
         Ok(result)
     }
 
-    /// 快捷回复一键发送：写入剪贴板并模拟粘贴，成功后执行「粘贴后动作」。
-    pub fn reply_paste_and_finish(&self, id: i64) -> CommandResult<PasteOutcome> {
-        let reply = self.reply.get_reply(id)?;
-        let outcome = self.paste.paste_content(&reply.to_clip_content())?;
-        self.after_paste(&outcome);
-        Ok(outcome)
-    }
-
-    /// 粘贴成功后的统一收尾：`sound_enabled` 播放提示音、`auto_close_after_paste` 收起面板。
+    /// 粘贴成功后的统一收尾：`sound_enabled` 播放提示音；面板是否收起由前端
+    /// 播完 140ms 收起动画后自行隐藏（这里只广播 `PASTE_FINISHED`，后端直接
+    /// hide 会打断动画与成功提示）。
     fn after_paste(&self, outcome: &PasteOutcome) {
         if !matches!(outcome, PasteOutcome::Pasted) {
             return;
@@ -188,10 +180,9 @@ impl AppState {
                 crate::core::sound::play_system_sound();
             });
         }
-        // 只收起面板：管理窗口是用户主动打开的，不应因一次粘贴被关掉。
-        if cfg.auto_close_after_paste {
-            crate::window::hide_panel_window(&self.app);
-        }
+        // 只通知前端：面板窗口在粘贴成功时由前端播完 140ms 收起动画再 hide
+        // （后端立即 hide 会把动画与 Toast 一起掐掉）。主窗口不受影响。
+        let _ = self.app.emit(crate::events::PASTE_FINISHED, ());
     }
 }
 

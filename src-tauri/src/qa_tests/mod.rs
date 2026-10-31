@@ -12,7 +12,6 @@ mod db;
 mod history;
 mod hotkey;
 mod manifest;
-mod reply;
 mod search;
 mod sensitivity;
 mod stack;

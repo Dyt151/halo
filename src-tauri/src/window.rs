@@ -3,8 +3,8 @@
 //! ClipBase 有两个窗口，职责严格分离（与 iCopy 等原生剪贴板工具一致）：
 //! - `panel`：快捷键唤出的**剪贴板面板**，无边框、贴底停靠（或跟随光标），
 //!   只承载历史卡片流；失焦即隐藏。
-//! - `main`：**管理窗口**（历史/回复/转换/模块/设置），从托盘或面板入口打开，
-//!   关闭时隐藏到托盘。
+//! - `main`：**管理窗口**（设置/历史/环形转换/模块），从面板入口打开，
+//!   关闭时隐藏到后台。
 //!
 //! 这一点很关键：早期版本二者共用一个窗口，快捷键只是把管理窗口压成底部条，
 //! 导致面板里出现导航与设置残留，观感与原生工具完全不同。
@@ -245,6 +245,8 @@ pub fn show_panel_window(app: &AppHandle) {
     // 否则同屏装了两个剪贴板工具时，我们的面板会被对方压住。
     #[cfg(target_os = "macos")]
     set_window_level(&panel, 25);
+    // 每次唤出都重申一次：全屏 App 里按快捷键时，面板必须能进当前 Space。
+    allow_over_fullscreen(&panel);
 
     // 捕获「唤出面板前」的前台 App，回贴时把焦点还给它（对标 iCopy 的
     // `preActiveApp` + `activateWithOptions:`）。必须在此刻（set_focus 之前）取，
@@ -257,6 +259,13 @@ pub fn show_panel_window(app: &AppHandle) {
 
     PANEL_SHOWN_AT_MS.store(now_ms(), Ordering::SeqCst);
     PANEL_FOCUSED.store(false, Ordering::SeqCst);
+    // 顺序很关键：先让宿主（NSPanel）进入**当前** Space——全屏 Space 也算——
+    // 再激活 App 抢键盘。直接对 Tauri 窗口 `show()` 会先触发激活，系统会把空间
+    // 切回桌面，面板就留在桌面 Space（用户看到的就是「全屏里按快捷键没反应」）。
+    #[cfg(target_os = "macos")]
+    reveal_panel_host(&panel);
+    #[cfg(target_os = "macos")]
+    order_front_regardless(&panel);
     let _ = panel.show();
     let _ = panel.set_focus();
     // 面板尺寸/位置每次都会变，macOS 的窗口阴影按旧矩形缓存，
@@ -345,6 +354,192 @@ fn set_window_level(window: &WebviewWindow, level: isize) {
     }
 }
 
+/// 让窗口能压到别的 App 的**全屏 Space** 上（仅 macOS）。
+///
+/// Tauri 的 `visibleOnAllWorkspaces` 只设 `NSWindowCollectionBehaviorCanJoinAllSpaces`，
+/// 缺了 `FullScreenAuxiliary` 时窗口属于「普通辅助窗口」：切到某个 App 的全屏
+/// Space 后，快捷键唤出的面板只会出现在桌面 Space 上，全屏界面里看不到。
+/// 置上这两位，窗口才允许在任意 Space（含全屏 Space）显示。
+#[cfg(target_os = "macos")]
+pub fn allow_over_fullscreen(window: &WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    /// NSWindowCollectionBehaviorCanJoinAllSpaces
+    const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+    /// NSWindowCollectionBehaviorFullScreenAuxiliary
+    const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+
+    let Ok(ptr) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ptr as *mut AnyObject;
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        let behavior: usize = msg_send![ns_window, collectionBehavior];
+        let updated = behavior | CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY;
+        let _: () = msg_send![ns_window, setCollectionBehavior: updated];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn allow_over_fullscreen(_window: &WebviewWindow) {}
+
+/// 面板的「Space 宿主」窗口（仅 macOS）。
+///
+/// 别的 App 的全屏 Space 不接受 Tauri 的普通 `NSWindow`：哪怕设了
+/// `CanJoinAllSpaces | FullScreenAuxiliary`，`orderFrontRegardless:` 之后它也只
+/// 排在桌面 Space，用户在 Safari/终端全屏里按快捷键什么都看不到。
+///
+/// 解法是另建一个**真实的** `NSPanel`（borderless + nonactivatingPanel）当宿主，
+/// 把面板挂成它的子窗口：宿主进哪个 Space，面板就跟到哪个 Space。面板本身仍是
+/// Tauri/tao 的窗口，拖拽、键盘与失焦逻辑都不用改。
+///
+/// 不直接改 Tauri 窗口的类：`object_setClass` 换成 NSPanel 时内存仍按 NSWindow
+/// 分配，NSPanel 多出来的实例变量会读到越界内存，`canBecomeKeyWindow` 与排序
+/// 行为随之时好时坏（实测会退化成拿不到键盘）。
+#[cfg(target_os = "macos")]
+static PANEL_HOST: Mutex<usize> = Mutex::new(0);
+
+#[cfg(target_os = "macos")]
+fn ns_window_ptr(window: &WebviewWindow) -> Option<*mut objc2::runtime::AnyObject> {
+    let ptr = window.ns_window().ok()? as *mut objc2::runtime::AnyObject;
+    (!ptr.is_null()).then_some(ptr)
+}
+
+/// 创建面板宿主（每进程一个）并把面板挂成它的子窗口。只在 setup 里调用一次。
+#[cfg(target_os = "macos")]
+pub fn prepare_panel_host(window: &WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::CGRect;
+
+    /// NSWindowStyleMaskNonactivatingPanel：不激活 App 也能收键盘。
+    const STYLE_NONACTIVATING_PANEL: usize = 1 << 7;
+    const BACKING_BUFFERED: usize = 2;
+    const BEHAVIOR_CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+    const BEHAVIOR_FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+    /// NSWindowAbove
+    const WINDOW_ABOVE: isize = 1;
+
+    let Some(panel) = ns_window_ptr(window) else {
+        return;
+    };
+    let mut host_slot = PANEL_HOST.lock_ok();
+    if *host_slot != 0 {
+        return;
+    }
+
+    unsafe {
+        let alloc: *mut AnyObject = msg_send![objc2::class!(NSPanel), alloc];
+        let host: *mut AnyObject = msg_send![
+            alloc,
+            initWithContentRect: CGRect::ZERO,
+            styleMask: STYLE_NONACTIVATING_PANEL,
+            backing: BACKING_BUFFERED,
+            defer: false
+        ];
+        if host.is_null() {
+            return;
+        }
+        let _: () = msg_send![host, setLevel: 25isize];
+        let _: () = msg_send![host, setOpaque: false];
+        let clear: *mut AnyObject = msg_send![objc2::class!(NSColor), clearColor];
+        let _: () = msg_send![host, setBackgroundColor: clear];
+        let _: () = msg_send![host, setHasShadow: false];
+        let _: () = msg_send![
+            host,
+            setCollectionBehavior: BEHAVIOR_CAN_JOIN_ALL_SPACES | BEHAVIOR_FULL_SCREEN_AUXILIARY
+        ];
+        let _: () = msg_send![host, setHidesOnDeactivate: false];
+        // 宿主只是 Space 锚点，鼠标一律穿透给下面的面板/其他 App。
+        let _: () = msg_send![host, setIgnoresMouseEvents: true];
+        let _: () = msg_send![host, setReleasedWhenClosed: false];
+        let _: () = msg_send![host, setBecomesKeyOnlyIfNeeded: false];
+        let _: () = msg_send![host, setFloatingPanel: true];
+        let _: () = msg_send![host, addChildWindow: panel, ordered: WINDOW_ABOVE];
+        *host_slot = host as usize;
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn prepare_panel_host(_window: &WebviewWindow) {}
+
+/// 显示前把面板重新挂回宿主、对齐位置与尺寸，并把宿主排进当前 Space。
+#[cfg(target_os = "macos")]
+pub fn reveal_panel_host(window: &WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::CGRect;
+
+    let Some(panel) = ns_window_ptr(window) else {
+        return;
+    };
+    let host = *PANEL_HOST.lock_ok() as *mut AnyObject;
+    if host.is_null() {
+        return;
+    }
+    /// NSWindowAbove
+    const WINDOW_ABOVE: isize = 1;
+    unsafe {
+        let frame: CGRect = msg_send![panel, frame];
+        // 收起面板时 AppKit 会把子窗口从父窗口摘掉（实测 `orderOut:` 之后
+        // `parentWindow` 变 nil）。不重新挂回去，面板就退回普通 NSWindow，
+        // 再次唤出只会出现在桌面 Space —— 表现为「Esc 收起后全屏里叫不出来」。
+        let _: () = msg_send![host, removeChildWindow: panel];
+        let _: () = msg_send![host, addChildWindow: panel, ordered: WINDOW_ABOVE];
+        // 挂回子窗口会把层级压到宿主的 floating 层级，补回状态栏层级，
+        // 保证仍能盖过其它 App 的浮动面板（与 set_window_level 的取值一致）。
+        let _: () = msg_send![panel, setLevel: 25isize];
+        let _: () = msg_send![host, setFrame: frame, display: false];
+        let _: () = msg_send![host, orderFrontRegardless];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn reveal_panel_host(_window: &WebviewWindow) {}
+
+/// 面板收起时一并收起宿主，避免 Space 里留一个透明空窗口。
+#[cfg(target_os = "macos")]
+pub fn conceal_panel_host() {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let host = *PANEL_HOST.lock_ok() as *mut AnyObject;
+    if host.is_null() {
+        return;
+    }
+    unsafe {
+        let _: () = msg_send![host, orderOut: std::ptr::null_mut::<AnyObject>()];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn conceal_panel_host() {}
+
+/// 不管 App 是否在前台，都把这个窗口排到当前 Space 的最前面（仅 macOS）。
+///
+/// `NSWindow.show()` 对应的 `makeKeyAndOrderFront:` 在 App 非前台时会等激活，
+/// 而激活本身又会被别的 App 的全屏 Space 挡住——两头堵，窗口就留在桌面 Space。
+#[cfg(target_os = "macos")]
+fn order_front_regardless(window: &WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let Ok(ptr) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ptr as *mut AnyObject;
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        let _: () = msg_send![ns_window, orderFrontRegardless];
+    }
+}
+
 /// 让 macOS 重新计算窗口阴影：窗口内容变成圆角后，旧的矩形阴影会露出直角。
 #[cfg(target_os = "macos")]
 fn refresh_shadow(window: &WebviewWindow) {
@@ -370,6 +565,7 @@ fn refresh_shadow(_window: &WebviewWindow) {}
 pub fn hide_panel_window(app: &AppHandle) {
     if let Some(panel) = app.get_webview_window("panel") {
         PANEL_FOCUSED.store(false, Ordering::SeqCst);
+        conceal_panel_host();
         let _ = panel.hide();
     }
 }
@@ -449,6 +645,7 @@ pub fn show_ring_window(app: &AppHandle, origin: (f64, f64)) {
     let placed = place_float_window_at(&ring, RING_SIZE, RING_SIZE, cx, cy);
     *RING_WINDOW_ORIGIN.lock_ok() = placed;
     set_float_level(&ring);
+    allow_over_fullscreen(&ring);
     let _ = ring.set_ignore_cursor_events(true);
     if let Err(e) = ring.show() {
         tracing::warn!("显示环形盘失败: {e}");
@@ -462,27 +659,6 @@ pub fn hide_ring_window(app: &AppHandle) {
     *RING_WINDOW_ORIGIN.lock_ok() = None;
     if let Some(ring) = app.get_webview_window("ring") {
         let _ = ring.hide();
-    }
-}
-
-/// 显示回复选择器（紧凑搜索 + 分组 + 回贴，不打开主窗口，评审 A1 / 任务 7）。
-pub fn show_reply_picker(app: &AppHandle) {
-    let Some(picker) = app.get_webview_window("picker") else {
-        return;
-    };
-    // 记住回贴目标 App：选择器拿到焦点后仍要把 ⌘V 注入用户正在用的 App。
-    remember_frontmost_app();
-    position_float_window(&picker, 460.0, 420.0);
-    set_float_level(&picker);
-    let _ = picker.show();
-    let _ = picker.set_focus();
-    let _ = app.emit("clipbase://picker-shown", ());
-}
-
-/// 隐藏回复选择器。
-pub fn hide_reply_picker(app: &AppHandle) {
-    if let Some(picker) = app.get_webview_window("picker") {
-        let _ = picker.hide();
     }
 }
 
@@ -598,20 +774,22 @@ fn apply_panel_layout(window: &WebviewWindow, config: &Config) {
     let origin_y = work.position.y as f64 / scale;
     let avail_width = work.size.width as f64 / scale;
     let avail_height = work.size.height as f64 / scale;
-    // 完整屏幕矩形（含程序坞占位）：贴底停靠的下边缘要盖到屏幕物理底边，
-    // 用 work_area 会停在坞上方留一条空隙。
-    let frame_pos = monitor.position();
-    let frame_size = monitor.size();
-    let screen_x = frame_pos.x as f64 / scale;
-    let screen_y = frame_pos.y as f64 / scale;
-    let screen_width = frame_size.width as f64 / scale;
-    let screen_height = frame_size.height as f64 / scale;
+    // 屏幕物理范围（含程序坞占用区）。贴底停靠按它算，保持面板原地不动：
+    // 程序坞盖住面板靠窗口层级压过去，而不是把面板往上挪。
+    let screen_pos = monitor.position();
+    let screen_size = monitor.size();
+    let screen_x = screen_pos.x as f64 / scale;
+    let screen_y = screen_pos.y as f64 / scale;
+    let screen_width = screen_size.width as f64 / scale;
+    let screen_height = screen_size.height as f64 / scale;
 
     // 面板高度 = 屏幕可用高度的 board_height_scale%，上下限保证可用性。
-    let max_height = (avail_height - PANEL_MARGIN * 2.0).max(160.0);
+    // 下限 220：卡片固定三段（28 头部 + 预览 + 30 底部）+ 工具栏 44 + 标签行 34
+    // + 状态栏 36 已接近 200，160 会把预览压到几乎不可见。
+    let max_height = (avail_height - PANEL_MARGIN * 2.0).max(220.0);
     let height = (avail_height * config.board_height_scale.clamp(10, 60) as f64 / 100.0)
         .round()
-        .max(160.0)
+        .max(220.0)
         .min(max_height);
     let width = panel_width(avail_width);
 
@@ -619,7 +797,9 @@ fn apply_panel_layout(window: &WebviewWindow, config: &Config) {
     let centered_y = origin_y + (avail_height - height) / 2.0;
 
     let (x, y, w) = match config.board_position.as_str() {
-        // 贴底停靠：横向铺满整块屏幕，下边缘压过程序坞（高度仍按 board_height_scale）。
+        // 贴底停靠：横向铺满屏幕，下边缘贴屏幕物理底边（原位置，不要挪）。
+        // 程序坞露在桌面上时确实会压到这里，但那由窗口层级解决：面板在
+        // reveal 时被抬到 NSStatusWindowLevel(25)，高于程序坞的 20。
         "bottom" => (screen_x, screen_y + screen_height - height, screen_width),
         // 屏幕居中。
         "screen" => (centered_x, centered_y, width),

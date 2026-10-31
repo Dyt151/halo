@@ -6,7 +6,12 @@
 
 pub mod document;
 pub mod image;
+pub mod jxa;
+pub mod pdfkit;
+pub mod sips;
 pub mod text;
+pub mod textutil;
+pub mod webprint;
 
 use std::sync::{Mutex, OnceLock};
 
@@ -25,6 +30,10 @@ pub fn engines() -> &'static [Box<dyn ConverterEngine>] {
             Box::new(image::ImageEngine),
             Box::new(text::TextEngine),
             Box::new(document::DocumentEngine),
+            Box::new(sips::SipsEngine),
+            Box::new(textutil::TextutilEngine),
+            Box::new(pdfkit::PdfkitEngine),
+            Box::new(webprint::WebprintEngine),
         ]
     })
 }
@@ -99,13 +108,32 @@ mod tests {
                 ),
                 "v1 不应声明特殊模式的边：{edge:?}"
             );
-            // 图片引擎的边两端都是图片，文本引擎两端都是文本。
+            use super::super::format::ConvertFormat;
+            let image_or_pdf = |f: ConvertFormat| f.is_image() || f == ConvertFormat::Pdf;
+            let text_or_doc = |f: ConvertFormat| f.is_text() || f.is_document();
             match edge.engine {
-                EngineId::Image => assert!(edge.from.is_image() && edge.to.is_image()),
+                // 图片引擎的边两端都是图片；sips 的边两端是图片或 PDF。
+                EngineId::Image => {
+                    assert!(edge.from.is_image() && edge.to.is_image())
+                }
+                EngineId::Sips => {
+                    assert!(image_or_pdf(edge.from) && image_or_pdf(edge.to))
+                }
                 EngineId::Text => assert!(edge.from.is_text() && edge.to.is_text()),
                 EngineId::Document => {
                     assert!(edge.from.is_image());
                     assert!(edge.to.is_text());
+                }
+                EngineId::Textutil => {
+                    assert!(text_or_doc(edge.from) && text_or_doc(edge.to))
+                }
+                EngineId::Pdfkit => {
+                    assert_eq!(edge.from, ConvertFormat::Pdf);
+                    assert_eq!(edge.to, ConvertFormat::Txt);
+                }
+                EngineId::Webprint => {
+                    assert_eq!(edge.from, ConvertFormat::Html);
+                    assert_eq!(edge.to, ConvertFormat::Pdf);
                 }
             }
         }

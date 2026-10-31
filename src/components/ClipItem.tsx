@@ -198,7 +198,7 @@ export default function ClipItem({
   return (
     <>
     <article
-      role="button"
+      role="group"
       tabIndex={0}
       data-clip-card
       aria-label={pasteOnSingleClick ? "回贴此条目" : "单击复制，双击回贴"}

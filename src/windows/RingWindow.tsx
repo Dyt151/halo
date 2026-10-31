@@ -23,6 +23,7 @@ import {
   hitTest,
   innerRadius,
   labelAnchor,
+  midAngle,
   outwardUnit,
   sectorPath,
 } from "../lib/ringGeometry";
@@ -45,6 +46,17 @@ const CLOSE_MS = 300;
 const REJECT_HOLD = 1300;
 /** 指针位移小于它就不算「真的在拖动」（与宿主接管阈值一致，防误触）。 */
 const ARM_DISTANCE = 6;
+/**
+ * 扇区多到这个数之后，标签改为沿半径方向排布。
+ *
+ * 切向排布的字宽上限就是一段弧长（21 片时只有 ~30px），「打包 TAR.GZ」
+ * 这种名字必然压到隔壁；沿半径有 R−r ≈ 87px，足够放下而不打架。
+ */
+const RADIAL_LABELS_FROM = 13;
+/** 沿半径排布时的字号（片数越多越小）。 */
+function radialFontSize(n: number): number {
+  return n > 18 ? 9 : 10;
+}
 
 const EV_UPDATE = "ring://update";
 const EV_PROGRESS = "ring://progress";
@@ -93,8 +105,6 @@ export default function RingWindow() {
   const [centerHover, setCenterHover] = useState(false);
   /** 指针在环外（NoDrop）：松手同样是取消，中心要如实说（§3.3）。 */
   const [noDrop, setNoDrop] = useState(false);
-  /** 打开动画相位：still 表示放完，不再重播。 */
-  const [phase, setPhase] = useState<"open" | "still">("open");
   /** 变一次就重播扇区动画（新会话）。 */
   const [animKey, setAnimKey] = useState(0);
   const [progress, setProgress] = useState<RingProgress | null>(null);
@@ -175,7 +185,6 @@ export default function RingWindow() {
     armedRef.current = false;
     firstPosRef.current = null;
     lastHitRef.current = null;
-    setPhase("open");
     setAnimKey((k) => k + 1);
   }, []);
 
@@ -401,6 +410,9 @@ export default function RingWindow() {
           ty: u.y * pop,
           lx: label.x,
           ly: label.y,
+          /** 沿半径排布用的参数：旋转角（12 点起顺时针）与半径中线。 */
+          ang: (midAngle(i, n) * 180) / Math.PI,
+          radialMid: (R + r) / 2,
           isActive,
           delay: i * OPEN_STAGGER,
           closeDelay: i * CLOSE_STAGGER,
@@ -440,16 +452,19 @@ export default function RingWindow() {
                 <g
                   key={`${s.action.id}-${animKey}`}
                   transform={`translate(${C} ${C}) scale(${s.isActive ? HOVER_SCALE : 1}) translate(${-C} ${-C}) translate(${s.tx.toFixed(2)} ${s.ty.toFixed(2)})`}
+                  style={{
+                    // hover 弹出走弹簧曲线（Wheel §1.3：320 刚度 20 阻尼的
+                    // overshoot 手感，用 back-out 贝塞尔近似）。
+                    transition: "transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+                  }}
                 >
                   <g
-                    className={closing ? "ring-sector-out" : phase === "open" ? "ring-sector-in" : undefined}
-                    style={
-                      {
-                        animationDelay: `${closing ? s.closeDelay : s.delay}ms`,
-                        /* 绕圆心缩放：Wheel §1.3「从中心缩放并带轻微旋转」。 */
-                        transformOrigin: `${C}px ${C}px`,
-                      } as React.CSSProperties
-                    }
+                    className={closing ? "ring-sector-out" : "ring-sector-in"}
+                    style={{
+                      animationDelay: `${closing ? s.closeDelay : s.delay}ms`,
+                      /* 绕圆心缩放：Wheel §1.3「从中心缩放并带轻微旋转」。 */
+                      transformOrigin: `${C}px ${C}px`,
+                    }}
                   >
                     <path
                       d={s.d}
@@ -462,18 +477,68 @@ export default function RingWindow() {
                       {/* 禁用原因同时做原生 tooltip：中心被占住时仍能查。 */}
                       {!enabled && <title>{s.action.disabled_reason ?? "这批文件用不上它"}</title>}
                     </path>
-                    <text
-                      x={s.lx}
-                      y={s.ly}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fontSize={11}
-                      fontWeight={s.isActive ? 600 : 500}
-                      fill={text}
-                      style={{ pointerEvents: "none", transition: "fill 120ms ease" }}
-                    >
-                      {s.action.label}
-                    </text>
+                    {sectors.length >= RADIAL_LABELS_FROM ? (
+                      // 片数多：文字沿半径排布（绕圆心转到本扇区角度），左半圈
+                      // 转 180° 保持正立，避免倒着读。
+                      <g transform={`rotate(${s.ang.toFixed(2)} ${C} ${C})`}>
+                        <text
+                          x={C}
+                          y={C - s.radialMid}
+                          transform={`rotate(${s.ang > 90 && s.ang < 270 ? 90 : -90} ${C} ${C - s.radialMid})`}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fontSize={radialFontSize(sectors.length)}
+                          fontWeight={s.isActive ? 600 : 500}
+                          fill={text}
+                          style={{ pointerEvents: "none", transition: "fill 120ms ease" }}
+                        >
+                          {s.action.label}
+                        </text>
+                        {s.action.convert + s.action.skip > 0 && (
+                          <text
+                            x={C}
+                            y={C - s.radialMid + 10}
+                            transform={`rotate(${s.ang > 90 && s.ang < 270 ? 90 : -90} ${C} ${C - s.radialMid + 10})`}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            fontSize={8}
+                            fill="rgba(255,255,255,0.45)"
+                            style={{ pointerEvents: "none", transition: "fill 120ms ease" }}
+                          >
+                            {s.action.convert + s.action.skip} 个
+                          </text>
+                        )}
+                      </g>
+                    ) : (
+                      <>
+                        <text
+                          x={s.lx}
+                          y={s.action.convert + s.action.skip > 0 ? s.ly - 4 : s.ly}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fontSize={11}
+                          fontWeight={s.isActive ? 600 : 500}
+                          fill={text}
+                          style={{ pointerEvents: "none", transition: "fill 120ms ease" }}
+                        >
+                          {s.action.label}
+                        </text>
+                        {/* 副行：落到这个动作的文件数（Filee 每扇区 caption）。 */}
+                        {s.action.convert + s.action.skip > 0 && (
+                          <text
+                            x={s.lx}
+                            y={s.ly + 8}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            fontSize={8}
+                            fill="rgba(255,255,255,0.45)"
+                            style={{ pointerEvents: "none", transition: "fill 120ms ease" }}
+                          >
+                            {s.action.convert + s.action.skip} 个
+                          </text>
+                        )}
+                      </>
+                    )}
                   </g>
                 </g>
               );
@@ -525,7 +590,7 @@ export default function RingWindow() {
             )}
           </div>
 
-          {/* 底部提示：只说一遍唯一手势，不再给键盘/翻面入口。 */}
+          {/* 底部提示：这盘只有这一个手势。 */}
           <div className="pointer-events-none absolute bottom-[8px] left-0 right-0 text-center text-[11px]/[15px] text-white/45">
             拖到扇区上松手转换 · 中心取消
           </div>

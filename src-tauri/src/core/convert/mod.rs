@@ -13,10 +13,12 @@
 //! 4. **先预留、写临时文件、再原子提交**（`output.rs`）：源文件永不因冲突策略被
 //!    覆盖，失败或取消不会留下半成品。
 //!
-//! 当前引擎：图片编解码（`image`）、文本互转（md/html/txt）、图片转文档。
-//! 故意缺的两条边——文本 → 图片（要排版渲染）、图片 → TXT（要 OCR）——在路由
-//! 图上就是不可达，会给出明确原因而不是假装成功。
+//! 当前引擎：图片编解码（`image`，PNG/JPG/WebP/GIF/BMP/TIFF 互转）、文本互转
+//! （html/txt）、图片转文档、macOS 系统 sips（HEIC 读写桥 + 图片 ↔ PDF）、
+//! textutil（TXT/HTML/DOCX）。故意缺的边——文本 → 图片（要排版渲染）、
+//! 图片 → TXT（要 OCR）——在路由图上就是不可达，会给出明确原因而不是假装成功。
 
+pub mod action;
 pub mod edge;
 pub mod engines;
 pub mod format;
@@ -28,7 +30,8 @@ pub mod text;
 
 pub use edge::{ConvertError, ConversionEdge, EngineId, EngineStatus};
 pub use format::{
-    detect_format, ConvertFormat, ALL_FORMATS, DEFAULT_JPEG_QUALITY, IMAGE_FORMATS, TEXT_FORMATS,
+    detect_format, ConvertFormat, ALL_FORMATS, DEFAULT_JPEG_QUALITY, DOC_FORMATS, IMAGE_FORMATS,
+    TEXT_FORMATS,
 };
 pub use job::{
     CancelToken, ConversionFileResult, ConversionJob, FileState, JobState, SkipCode, SkipReason,
@@ -37,15 +40,12 @@ pub use output::{AllocError, OutputAllocator, OutputRequest, ReservedOutput};
 pub use preset::{
     builtin_presets, ConflictPolicy, ConversionPreset, ImageOptions, OutputRule, TargetSpec,
 };
-pub use text::{
-    html_to_markdown, html_to_text, markdown_to_html, markdown_to_text, text_to_html,
-    text_to_markdown,
-};
+pub use text::{html_to_text, text_to_html};
 
 /// 纯函数：返回该源格式能转换到的目标格式列表（**不含自身**）。
 ///
-/// 从路由图上筛：一张图能去 5 种图片 + md/html；文本三方互转；图片 → TXT 因为
-/// 需要 OCR，图上不可达，所以不会出现在这里。
+/// 从路由图上筛：一张图能去其余常规图片 + html + pdf；文本 html/txt 互转并
+/// 可到 docx/pdf；图片 → TXT 因为需要 OCR，图上不可达，所以不会出现在这里。
 pub fn available_targets(source: ConvertFormat) -> Vec<ConvertFormat> {
     ALL_FORMATS
         .into_iter()
@@ -66,6 +66,7 @@ pub fn adhoc_preset(
     ConversionPreset {
         id: format!("adhoc.{}", target.as_str()),
         name: preset::default_preset_name(target, jpeg_quality),
+        kind: preset::PresetKind::Convert,
         target: TargetSpec::Explicit(target),
         image: ImageOptions {
             jpeg_quality: jpeg_quality.clamp(1, 100),
@@ -136,7 +137,8 @@ mod tests {
 
     #[test]
     fn available_targets_matrix() {
-        // 图片：其余 5 种图片 + md/html（包成文档），唯独不能直接转 TXT（要 OCR）。
+        // 图片：其余常规图片 + HEIC + HTML（内联）+ PDF（单页嵌入），
+        // 唯独不能直接转 TXT（要 OCR）。
         assert_eq!(
             available_targets(ConvertFormat::Png),
             vec![
@@ -145,21 +147,28 @@ mod tests {
                 ConvertFormat::Gif,
                 ConvertFormat::Bmp,
                 ConvertFormat::Tiff,
-                ConvertFormat::Md,
+                ConvertFormat::Heic,
                 ConvertFormat::Html,
+                ConvertFormat::Pdf,
             ]
         );
         for f in IMAGE_FORMATS {
             let targets = available_targets(f);
             assert!(!targets.contains(&f), "目标里不该包含自身");
-            assert_eq!(targets.len(), 7);
+            assert_eq!(targets.len(), 8);
             assert!(!targets.contains(&ConvertFormat::Txt), "图片→TXT 需要 OCR");
         }
-        // 文本：md / html / txt 三方互转，但不含图片（需要排版引擎）。
+        // 文本：html / txt 互转 + PDF 排版 + DOCX（textutil），
+        // 但不含图片（PDF 是排版终点，不会再被 pdf→图片 接走）。
         for f in TEXT_FORMATS {
             let targets = available_targets(f);
             assert!(!targets.contains(&f), "目标里不该包含自身");
-            assert_eq!(targets.len(), 2);
+            assert!(targets.contains(&ConvertFormat::Pdf));
+            assert!(targets.contains(&ConvertFormat::Docx));
+            assert!(
+                !targets.iter().any(|t| t.is_image()),
+                "文本 → 图片当前版本未接入"
+            );
         }
     }
 
@@ -212,22 +221,56 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// 端到端：真实 HEIC → 两步路由（sips 桥 + image 引擎）→ JPG，
+    /// 透明图按预设背景色合成，不出现随机黑底。
+    #[test]
+    fn heic_to_jpg_roundtrip_through_sips_bridge() {
+        use std::process::Command;
+
+        let dir = scratch_dir("heic");
+        let src_png = dir.join("src.png");
+        let mut rgba = image::RgbaImage::new(16, 16);
+        for p in rgba.pixels_mut() {
+            *p = image::Rgba([10, 200, 10, 0]); // 全透明
+        }
+        rgba.save(&src_png).expect("save png");
+
+        let src_heic = dir.join("src.heic");
+        let status = Command::new("sips")
+            .arg("-s")
+            .arg("format")
+            .arg("heic")
+            .arg(&src_png)
+            .arg("--out")
+            .arg(&src_heic)
+            .status()
+            .expect("run sips");
+        assert!(status.success(), "sips 生成 HEIC 失败");
+        assert!(src_heic.exists());
+
+        // 两步路由 heic → png → jpg：sips 出桥，image 引擎合成背景。
+        let out = convert_file(src_heic.to_str().unwrap(), ConvertFormat::Jpg, 85, None)
+            .expect("heic -> jpg");
+        assert!(out.ends_with("src.jpg"), "{out}");
+        let back = image::open(&out).expect("open jpg").to_rgb8();
+        // 白底合成：绿色透明像素应变成白色（不是随机黑底）。
+        let px = back.get_pixel(0, 0);
+        assert!(px[0] > 200 && px[1] > 200 && px[2] > 200, "背景不是白底：{px:?}");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn text_matrix_all_pairs() {
         let dir = scratch_dir("text-matrix");
 
         let txt = dir.join("a.txt");
         fs::write(&txt, "第一行\r\n第二行").expect("write txt");
-        let md = convert_file(txt.to_str().unwrap(), ConvertFormat::Md, 85, None).expect("txt->md");
-        assert_eq!(fs::read_to_string(&md).unwrap(), "第一行\n第二行\n");
-
-        let txt2 = dir.join("b.txt");
-        fs::write(&txt2, "<b>不是标签</b> & 保留").expect("write txt");
         let html =
-            convert_file(txt2.to_str().unwrap(), ConvertFormat::Html, 85, None).expect("txt->html");
+            convert_file(txt.to_str().unwrap(), ConvertFormat::Html, 85, None).expect("txt->html");
         let body = fs::read_to_string(&html).unwrap();
         assert!(
-            body.contains("&lt;b&gt;不是标签&lt;/b&gt; &amp; 保留"),
+            body.contains("第一行\r\n第二行") || body.contains("第一行\n第二行"),
             "{body}"
         );
         assert!(body.contains("<pre>"), "{body}");
@@ -240,24 +283,19 @@ mod tests {
              <pre>let a = 1;</pre>",
         )
         .expect("write html");
-        let md2 =
-            convert_file(src_html.to_str().unwrap(), ConvertFormat::Md, 85, None).expect("html->md");
-        let out = fs::read_to_string(&md2).unwrap();
-        assert!(out.contains("## 标题"), "{out}");
-        assert!(out.contains("正文 **粗**"), "{out}");
-        assert!(out.contains("[链接](https://x.test)"), "{out}");
-        assert!(out.contains("- 甲"), "{out}");
-        assert!(out.contains("![图](p.png)"), "{out}");
-        assert!(out.contains("```\nlet a = 1;\n```"), "{out}");
-
-        let plain = convert_file(&md2, ConvertFormat::Txt, 85, None).expect("md->txt");
-        assert!(fs::read_to_string(&plain).unwrap().contains("标题"));
+        let plain =
+            convert_file(src_html.to_str().unwrap(), ConvertFormat::Txt, 85, None).expect("html->txt");
+        let out = fs::read_to_string(&plain).unwrap();
+        assert!(out.contains("标题"), "{out}");
+        assert!(out.contains("正文 粗 链接"), "{out}");
+        assert!(out.contains("甲\n乙"), "{out}");
+        assert!(out.contains("let a = 1;"), "{out}");
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn image_to_document_is_honest_about_reference_vs_embed() {
+    fn image_to_document_is_honest_about_embedding() {
         let dir = scratch_dir("image-doc");
         let mut img = image::RgbImage::new(4, 3);
         for (x, y, p) in img.enumerate_pixels_mut() {
@@ -265,10 +303,6 @@ mod tests {
         }
         let src = dir.join("pic.png");
         img.save(&src).expect("save png");
-
-        // Markdown：只引用源图（同目录用文件名）。
-        let md = convert_file(src.to_str().unwrap(), ConvertFormat::Md, 85, None).expect("png->md");
-        assert_eq!(fs::read_to_string(&md).unwrap(), "![pic](pic.png)\n");
 
         // HTML：真正内联成 data URI，不再依赖外部文件。
         let html =
@@ -287,9 +321,9 @@ mod tests {
     #[test]
     fn convert_batch_text_flow_reports_every_file() {
         let dir = scratch_dir("text");
-        let md = dir.join("note.md");
-        fs::write(&md, "# 标题\n\n正文 **粗体**。").expect("write md");
-        let md_path = md.to_str().unwrap().to_string();
+        let txt = dir.join("note.txt");
+        fs::write(&txt, "第一行\n第二行").expect("write txt");
+        let txt_path = txt.to_str().unwrap().to_string();
 
         // 批量入口统一走 Job（不再有 `convert_files` 旧包装），每个输入都必须有结果。
         let batch = |target: ConvertFormat, sources: &[String]| {
@@ -297,15 +331,10 @@ mod tests {
             job::run(sources, &preset, &mut |_, _, _| {})
         };
 
-        let html_job = batch(ConvertFormat::Html, std::slice::from_ref(&md_path));
+        let html_job = batch(ConvertFormat::Html, std::slice::from_ref(&txt_path));
         assert_eq!(html_job.files[0].state, FileState::Done, "{:?}", html_job.files[0]);
         let html = fs::read_to_string(&html_job.files[0].outputs[0]).expect("read html");
-        assert!(html.contains("<h1>标题</h1>"), "{html}");
-
-        let txt_job = batch(ConvertFormat::Txt, std::slice::from_ref(&md_path));
-        let txt = fs::read_to_string(&txt_job.files[0].outputs[0]).expect("read txt");
-        assert!(txt.contains("标题"));
-        assert!(txt.contains("正文 粗体。"));
+        assert!(html.contains("第一行"), "{html}");
 
         let html_file = dir.join("page.html");
         fs::write(&html_file, "<h2>Hi</h2><p>Body <i>italic</i></p>").expect("write html");
@@ -314,7 +343,7 @@ mod tests {
         assert_eq!(txt2, "Hi\nBody italic");
 
         // 混合批次：失败项不影响成功项，且每项都有结果。
-        let mixed = batch(ConvertFormat::Html, &[md_path, unknown_path(&dir)]);
+        let mixed = batch(ConvertFormat::Html, &[txt_path, unknown_path(&dir)]);
         assert_eq!(mixed.files.len(), 2);
         assert_eq!(mixed.files[0].state, FileState::Done);
         // 扩展名不认识是「跳过 + 结构化原因」，不是失败（旧版会当成错误）。
@@ -338,7 +367,7 @@ mod tests {
     #[test]
     fn detect_format_recognizes_supported_files_only() {
         assert_eq!(detect_format("a/b/foo.PNG"), Some(ConvertFormat::Png));
-        assert_eq!(detect_format("note.md"), Some(ConvertFormat::Md));
+        assert_eq!(detect_format("page.html"), Some(ConvertFormat::Html));
         assert_eq!(detect_format("mystery.xyz"), None);
         assert_eq!(detect_format("plain.txt"), Some(ConvertFormat::Txt));
     }

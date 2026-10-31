@@ -1,4 +1,4 @@
-//! 从其它剪贴板工具迁移历史 / 快捷回复到 ClipBase。
+//! 从其它剪贴板工具迁移历史到 ClipBase。
 //!
 //! 导入数据由外部脚本产出（见 `scripts/import_icopy.py`），格式为 JSON：
 //! `content` 字段直接就是 [`ClipContent`] 的 serde 表示，因此
@@ -6,14 +6,13 @@
 //! 与正常捕获入库的记录完全同构。
 //!
 //! 迁移记录会**保留原始时间戳**（普通捕获用「当前时间」）。
+//! 快捷回复功能已下线，导入只处理历史条目。
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::settings::SensitivityPolicy;
 use crate::core::clipboard::types::{hash_content, ClipContent, ClipItem, SyncState};
 use crate::core::history::HistoryService;
-use crate::core::reply::xlsx::ImportRow;
-use crate::core::reply::ReplyService;
 use crate::core::sensitivity::{self, SensitivityDetector};
 use crate::error::CommandResult;
 
@@ -36,25 +35,11 @@ pub struct ImportClip {
     pub tag: Option<String>,
 }
 
-/// 一条待导入的快捷回复（与 xlsx 导入同构，但单独定义以便反序列化）。
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ImportReply {
-    /// 所属分组名（不存在则新建）。
-    #[serde(default)]
-    pub group: Option<String>,
-    #[serde(default)]
-    pub title: String,
-    #[serde(default)]
-    pub content: String,
-}
-
 /// 导入文件整体结构。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ImportFile {
     #[serde(default)]
     pub clips: Vec<ImportClip>,
-    #[serde(default)]
-    pub replies: Vec<ImportReply>,
 }
 
 /// 导入结果摘要。
@@ -65,10 +50,6 @@ pub struct ImportSummary {
     /// 与既有记录合并（去重/按时间原位更新）的条数。
     #[serde(default)]
     pub merged: usize,
-    /// 成功导入的回复条数。
-    pub replies: usize,
-    /// 新建的回复分组数。
-    pub groups: usize,
     /// 失败/跳过的条数。
     pub skipped: usize,
     /// 失败明细。
@@ -82,7 +63,7 @@ pub struct ImportSummary {
 /// 通常只有几 MB，64 MB 已经非常宽松。
 const MAX_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
 
-/// 把导入文件里的历史与回复写入 ClipBase。
+/// 把导入文件里的历史写入 ClipBase。
 /// `replace` 为 true 时按「创建时间 + 来源 App」原位更新已有记录，
 /// 供修复提取逻辑后重导入用（否则 hash 变化会新增重复行）。
 /// `policy` 与剪贴板捕获共用同一套敏感内容规则（见 [`sensitivity::apply`]）。
@@ -93,7 +74,6 @@ const MAX_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
 pub fn import_from_file(
     path: &std::path::Path,
     history: &HistoryService,
-    reply: &ReplyService,
     replace: bool,
     policy: SensitivityPolicy,
 ) -> CommandResult<ImportSummary> {
@@ -131,14 +111,13 @@ pub fn import_from_file(
     let file: ImportFile = serde_json::from_slice(&raw).map_err(|e| {
         crate::error::AppError::with_details(2002, "解析导入文件失败", e.to_string())
     })?;
-    Ok(import(file, history, reply, replace, policy))
+    Ok(import(file, history, replace, policy))
 }
 
-/// 导入内存中的历史与回复。
+/// 导入内存中的历史。
 pub fn import(
     file: ImportFile,
     history: &HistoryService,
-    reply: &ReplyService,
     replace: bool,
     policy: SensitivityPolicy,
 ) -> ImportSummary {
@@ -191,26 +170,6 @@ pub fn import(
                 summary.skipped += 1;
                 summary.errors.push(format!("导入历史失败：{e}"));
             }
-        }
-    }
-
-    if !file.replies.is_empty() {
-        let rows: Vec<ImportRow> = file
-            .replies
-            .into_iter()
-            .map(|r| ImportRow {
-                group: r.group,
-                title: r.title,
-                content: r.content,
-            })
-            .collect();
-        match reply.import_replies(&rows) {
-            Ok(r) => {
-                summary.replies += r.imported;
-                summary.groups += r.groups_created;
-                summary.errors.extend(r.errors);
-            }
-            Err(e) => summary.errors.push(format!("导入回复失败：{e}")),
         }
     }
 

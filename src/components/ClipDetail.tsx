@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { ClipItem as ClipItemType } from "../lib/types";
 import { fileBasename, formatRelativeTime, formatSize, typeLabel } from "../lib/format";
@@ -28,8 +28,15 @@ export default function ClipDetail({
     [clip],
   );
   const text = clip.content.kind === "text" ? clip.content.value : clip.preview;
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // 焦点管理（评审 U5）：打开时把焦点移入对话框，Tab 在框内循环，
+    // 关闭时归还到触发元素 —— 否则键盘 / 读屏用户会滞留在背景卡片上。
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const node = dialogRef.current;
+    node?.focus();
+
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -41,10 +48,37 @@ export default function ClipDetail({
         e.preventDefault();
         e.stopPropagation();
         onPaste();
+      } else if (e.key === "Tab") {
+        // 焦点陷阱：只在对话框内的可聚焦元素之间循环。
+        if (!node) return;
+        const focusables = Array.from(
+          node.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter((el) => !el.hasAttribute("disabled"));
+        if (focusables.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (e.shiftKey) {
+          if (active === first || active === node) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (active === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      previouslyFocused?.focus?.();
+    };
   }, [onClose, onPaste]);
 
   const meta = `${typeLabel(clip.content_type)} · ${formatSize(clip.size_bytes)} · ${formatRelativeTime(clip.created_at)}`;
@@ -55,7 +89,9 @@ export default function ClipDetail({
       onClick={onClose}
     >
       <div
-        className="menu flex h-full max-h-[560px] w-full max-w-[640px] flex-col rounded-[10px] p-0 shadow-modal"
+        ref={dialogRef}
+        tabIndex={-1}
+        className="menu flex h-full max-h-[560px] w-full max-w-[640px] flex-col rounded-[10px] p-0 shadow-modal outline-none"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

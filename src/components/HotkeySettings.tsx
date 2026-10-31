@@ -26,15 +26,17 @@ type Hotkeys = HotkeyConfig;
 
 /** 行定义：槽位 → 文案与说明。顺序即界面顺序。 */
 const ROWS: { slot: Slot; label: string; hint: string }[] = [
-  { slot: "toggle", label: "唤起 / 收起面板", hint: "全局生效，与 iCopy 默认的 ⌃C 一致" },
+  {
+    slot: "toggle",
+    label: "唤起 / 收起面板",
+    hint: "全局生效。默认 ⌃⌥C：⌃C 是终端的中断信号，会抢走 Ctrl+C",
+  },
   { slot: "stack_paste", label: "粘贴堆栈顶", hint: "不开面板时直接用堆栈里最新的一条" },
-  { slot: "reply_picker", label: "快捷回复选择器", hint: "在任意 App 里直接挑一条常用回复" },
 ];
 
 const DEFAULTS: HotkeyConfig = {
-  toggle: "Control+C",
+  toggle: "Control+Option+C",
   stack_paste: "Control+Shift+V",
-  reply_picker: "Control+Shift+R",
 };
 
 /** 录制中只按了修饰键时的回显。 */
@@ -388,7 +390,7 @@ export default function HotkeySettings() {
         <div className="flex flex-wrap items-center gap-[8px] text-[12px]/[18px] text-white/45">
           <span className="shrink-0">提示</span>
           <span>
-            ⌘Q、⌘Space、⌘⇧3/4/5 等系统保留组合会被直接拒绝；
+            ⌘Q、⌘Space、⌘⇧3/4/5、⌃C 等系统保留组合会被直接拒绝；
             <span className="text-white/60">⌘W</span> 是本应用的关闭窗口，也不建议占用。
           </span>
           <Kbd>Esc</Kbd>

@@ -112,5 +112,7 @@ pub fn migrations() -> Migrations<'static> {
             );
             "#,
         ),
+        // v6：快捷回复功能下线（自用不需要），回收两张表。
+        M::up("DROP TABLE replies; DROP TABLE reply_groups;"),
     ])
 }

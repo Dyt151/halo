@@ -1,4 +1,4 @@
-//! 文本引擎：Markdown / HTML / TXT 三方互转（6 条边，无 self edge）。
+//! 文本引擎：HTML / TXT 双向互转（2 条边，无 self edge）。
 //!
 //! 不声明 self edge 的原因：同格式文本重编码没有可观察的语义（不是压缩、不是
 //! 变换），所以 `SameAsSource` 落在文本上会明确报「已是目标格式」，而不是
@@ -14,10 +14,7 @@ use super::super::edge::{
     EngineStatus, StepOutput,
 };
 use super::super::format::ConvertFormat;
-use super::super::text::{
-    html_to_markdown, html_to_text, markdown_to_html, markdown_to_text, text_to_html,
-    text_to_markdown,
-};
+use super::super::text::{html_to_text, text_to_html};
 
 /// 文本引擎。
 pub struct TextEngine;
@@ -46,9 +43,8 @@ impl ConverterEngine for TextEngine {
     }
 
     fn edges(&self) -> Vec<ConversionEdge> {
-        use ConvertFormat::{Html, Md, Txt};
-        const PAIRS: [(ConvertFormat, ConvertFormat); 6] =
-            [(Md, Html), (Md, Txt), (Html, Md), (Html, Txt), (Txt, Md), (Txt, Html)];
+        use ConvertFormat::{Html, Txt};
+        const PAIRS: [(ConvertFormat, ConvertFormat); 2] = [(Html, Txt), (Txt, Html)];
         PAIRS
             .into_iter()
             .map(|(from, to)| ConversionEdge::new(from, to, EngineId::Text, 5, EdgeMode::Normal))
@@ -59,11 +55,7 @@ impl ConverterEngine for TextEngine {
         let mut warnings = Vec::new();
         let raw = read_text(step.input, &mut warnings)?;
         let content = match (step.from, step.to) {
-            (ConvertFormat::Md, ConvertFormat::Html) => markdown_to_html(&raw),
-            (ConvertFormat::Md, ConvertFormat::Txt) => markdown_to_text(&raw),
             (ConvertFormat::Html, ConvertFormat::Txt) => html_to_text(&raw),
-            (ConvertFormat::Html, ConvertFormat::Md) => html_to_markdown(&raw),
-            (ConvertFormat::Txt, ConvertFormat::Md) => text_to_markdown(&raw),
             (ConvertFormat::Txt, ConvertFormat::Html) => text_to_html(&raw),
             (from, to) => {
                 return Err(ConvertError::unsupported(format!(
@@ -106,7 +98,7 @@ fn read_text(path: &Path, warnings: &mut Vec<String>) -> Result<String, ConvertE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::convert::preset::ConversionPreset;
+    use crate::core::convert::preset::{ConversionPreset, PresetKind};
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -118,13 +110,14 @@ mod tests {
         dir
     }
 
-    /// 6 条边必须条条能跑通（矩阵闭合）。
+    /// 2 条边必须条条能跑通（矩阵闭合）。
     #[test]
-    fn all_six_edges_execute() {
+    fn all_edges_execute() {
         let dir = scratch("edges");
-        let md = ConversionPreset {
+        let preset = ConversionPreset {
             id: "t".into(),
             name: "t".into(),
+            kind: PresetKind::Convert,
             target: crate::core::convert::preset::TargetSpec::Explicit(ConvertFormat::Html),
             image: Default::default(),
             output: Default::default(),
@@ -133,16 +126,17 @@ mod tests {
         };
 
         let pairs = [
-            ("a.md", ConvertFormat::Md, ConvertFormat::Html),
-            ("b.md", ConvertFormat::Md, ConvertFormat::Txt),
-            ("c.html", ConvertFormat::Html, ConvertFormat::Md),
-            ("d.html", ConvertFormat::Html, ConvertFormat::Txt),
-            ("e.txt", ConvertFormat::Txt, ConvertFormat::Md),
+            ("a.html", ConvertFormat::Html, ConvertFormat::Txt),
             ("f.txt", ConvertFormat::Txt, ConvertFormat::Html),
         ];
         for (name, from, to) in pairs {
             let src = dir.join(name);
-            std::fs::write(&src, "# 标题\n\n正文 **粗**\n").expect("write");
+            let body = if from == ConvertFormat::Html {
+                "<h2>标题</h2><p>正文</p>"
+            } else {
+                "标题\n正文"
+            };
+            std::fs::write(&src, body).expect("write");
             let out = dir.join(format!("{name}.out"));
             let step = ConversionStep {
                 input: &src,
@@ -150,7 +144,7 @@ mod tests {
                 from,
                 to,
                 final_format: to,
-                preset: &md,
+                preset: &preset,
                 original: &src,
                 is_final: true,
             };
@@ -169,11 +163,12 @@ mod tests {
         let dir = scratch("utf8");
         let src = dir.join("bad.txt");
         std::fs::write(&src, [0x61, 0xFF, 0x62]).expect("write");
-        let out = dir.join("bad.md");
+        let out = dir.join("bad.html");
         let preset = ConversionPreset {
             id: "t".into(),
             name: "t".into(),
-            target: crate::core::convert::preset::TargetSpec::Explicit(ConvertFormat::Md),
+            kind: PresetKind::Convert,
+            target: crate::core::convert::preset::TargetSpec::Explicit(ConvertFormat::Html),
             image: Default::default(),
             output: Default::default(),
             reencode_same_format: false,
@@ -184,8 +179,8 @@ mod tests {
                 input: &src,
                 output: &out,
                 from: ConvertFormat::Txt,
-                to: ConvertFormat::Md,
-                final_format: ConvertFormat::Md,
+                to: ConvertFormat::Html,
+                final_format: ConvertFormat::Html,
                 preset: &preset,
                 original: &src,
                 is_final: true,

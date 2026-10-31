@@ -1,11 +1,11 @@
 //! 图片编解码引擎（`image` crate）。
 //!
-//! 声明的边：6 种图片两两互转 + 每种格式的 self edge（同格式重编码）。
-//! self edge 只是「引擎有能力」，是否真的执行由 preset 的
-//! `reencode_same_format` 决定——JPG→JPG 降质量是合法任务，PNG→PNG 无事可做
-//! 就该在规划前被判成「已是目标格式」（§2.4 / 验收 P0）。
+//! 声明的边：PNG / JPG / WebP / GIF / BMP / TIFF 六种编解码格式两两互转 +
+//! 每种格式的 self edge（同格式重编码）。self edge 只是「引擎有能力」，是否
+//! 真的执行由 preset 的 `reencode_same_format` 决定——JPG→JPG 降质量是合法
+//! 任务，PNG→PNG 无事可做就该在规划前被判成「已是目标格式」（§2.4 / 验收 P0）。
 //!
-//! 三条不静默保真的语义（§5.1）：
+//! 两条不静默保真的语义（§5.1）：
 //! - 透明图转到无 alpha 格式（JPG）先按 preset 背景色合成，绝不留下随机黑底；
 //! - EXIF 方向烘焙进像素（`Orientation` 由解码器给出），输出不带 EXIF；
 //! - 动画 GIF 只有 GIF→GIF 才逐帧保留，其余目标保留首帧并**记警告**。
@@ -20,7 +20,7 @@ use super::super::edge::{
     ConversionEdge, ConversionStep, ConvertError, ConverterEngine, EdgeMode, EngineId,
     EngineStatus, StepOutput,
 };
-use super::super::format::{ConvertFormat, IMAGE_FORMATS};
+use super::super::format::{ConvertFormat, IMAGE_CODEC_FORMATS};
 
 /// 图片引擎：解码 → （变换）→ 编码。
 pub struct ImageEngine;
@@ -72,9 +72,9 @@ impl ConverterEngine for ImageEngine {
     }
 
     fn edges(&self) -> Vec<ConversionEdge> {
-        let mut out = Vec::with_capacity(IMAGE_FORMATS.len() * IMAGE_FORMATS.len());
-        for from in IMAGE_FORMATS {
-            for to in IMAGE_FORMATS {
+        let mut out = Vec::with_capacity(IMAGE_CODEC_FORMATS.len() * IMAGE_CODEC_FORMATS.len());
+        for from in IMAGE_CODEC_FORMATS {
+            for to in IMAGE_CODEC_FORMATS {
                 let cost = if from == to { 12 } else { 10 };
                 out.push(ConversionEdge::new(
                     from,
@@ -98,7 +98,7 @@ impl ConverterEngine for ImageEngine {
             }
         }
 
-        let decoded = decode(step.input)?;
+        let decoded = decode(step.input, step.from)?;
         let mut warnings: Vec<String> = Vec::new();
 
         warnings.extend(decoded.warnings.iter().cloned());
@@ -131,7 +131,10 @@ struct Decoded {
 }
 
 /// 解码：应用 EXIF 方向、记录 ICC / 元数据丢失。
-fn decode(path: &Path) -> Result<Decoded, ConvertError> {
+///
+/// 先按魔数猜测格式；猜不出（TGA 没有可靠魔数）就按 `from` 的扩展名兜底——
+/// 路由阶段已经按扩展名定过格式，这里不需要重新发明格式探测。
+fn decode(path: &Path, from: ConvertFormat) -> Result<Decoded, ConvertError> {
     let bytes = std::fs::read(path).map_err(|e| ConvertError::io(format!("读取图片失败：{e}")))?;
     let mut warnings: Vec<String> = Vec::new();
 
@@ -144,9 +147,16 @@ fn decode(path: &Path) -> Result<Decoded, ConvertError> {
         warnings.push("源文件是多帧动画 GIF".to_string());
     }
 
-    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+    let reader = match image::ImageReader::new(std::io::Cursor::new(bytes.clone()))
         .with_guessed_format()
-        .map_err(|e| ConvertError::decode(format!("无法识别图片内容：{e}")))?;
+    {
+        Ok(reader) => reader,
+        Err(_) => {
+            let format = image::ImageFormat::from_extension(from.as_str())
+                .ok_or_else(|| ConvertError::decode("无法识别图片内容"))?;
+            image::ImageReader::with_format(std::io::Cursor::new(bytes), format)
+        }
+    };
     let mut decoder = reader
         .into_decoder()
         .map_err(|e| ConvertError::decode(format!("无法初始化解码器：{e}")))?;
@@ -352,6 +362,7 @@ mod tests {
         ConversionPreset {
             id: "test".into(),
             name: "test".into(),
+            kind: crate::core::convert::preset::PresetKind::Convert,
             target: TargetSpec::Explicit(ConvertFormat::Jpg),
             image: ImageOptions {
                 jpeg_quality: 90,

@@ -9,13 +9,12 @@ import {
   onModuleStateChanged,
   onSyncCompleted,
 } from "./lib/events";
-import { isPanelWindow, isRingWindow, isPickerWindow } from "./lib/windows";
+import { isPanelWindow, isRingWindow } from "./lib/windows";
 import { getDialog } from "./lib/dialog";
 import { isTextEditing, isTextEditingAt } from "./lib/focus";
 import Panel from "./windows/Panel";
 import MainWindow from "./windows/MainWindow";
 import RingWindow from "./windows/RingWindow";
-import ReplyPicker from "./windows/ReplyPicker";
 import DialogHost from "./components/DialogHost";
 import ToastHost from "./components/ToastHost";
 
@@ -24,7 +23,6 @@ import ToastHost from "./components/ToastHost";
  *
  * - `panel`：快捷键唤出的剪贴板面板（只呈现卡片流）。
  * - `ring`：Finder 环形转换盘（现场浮动面板）。
- * - `picker`：快捷回复选择器（现场回贴）。
  * - `main`：主窗口 = 纯设置中心。
  *
  * 两个窗口是独立 webview，各自挂载一份 React，但共享同一份后端状态；
@@ -42,23 +40,24 @@ export default function App() {
   const [winKind] = useState(() => ({
     panel: isPanelWindow(),
     ring: isRingWindow(),
-    picker: isPickerWindow(),
   }));
   const panel = winKind.panel;
 
   // 外观（清单 25）：system 跟随系统，dark/light 强制；浅色时给 <html> 挂 .light，
-  // 由 index.css 的 :root.light 变量组整体换肤。
+  // 由 index.css 的 :root.light 变量组整体换肤。环形盘是硬编码深色 HUD，
+  // 挂 .light 会让半透明底变亮、看不清内容，这里直接跳过（评审 V02）。
   useEffect(() => {
     const root = document.documentElement;
     const media = window.matchMedia("(prefers-color-scheme: light)");
     const apply = () => {
-      const light = theme === "light" || (theme !== "dark" && media.matches);
+      const light =
+        !winKind.ring && (theme === "light" || (theme !== "dark" && media.matches));
       root.classList.toggle("light", light);
     };
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [theme]);
+  }, [theme, winKind.ring]);
 
   useEffect(() => {
     void refresh();
@@ -101,9 +100,9 @@ export default function App() {
   // 因此 Rust 侧菜单只负责转发事件，具体语义交给当前窗口的前端。
   // 同时监听键盘：WKWebView 里 ⌘Z 不一定能命中菜单项（焦点在自绘元素上时）。
   useEffect(() => {
-    // 环形盘 / 回复选择器是现场窗口，根本没有「历史列表」这个概念：
-    // 在这两处按 ⌘Z 不该去撤销一条用户看不见的删除。
-    if (winKind.ring || winKind.picker) return;
+    // 环形盘是现场窗口，根本没有「历史列表」这个概念：
+    // 在这里按 ⌘Z 不该去撤销一条用户看不见的删除。
+    if (winKind.ring) return;
 
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
@@ -140,14 +139,12 @@ export default function App() {
       window.removeEventListener("keydown", onKey);
       void Promise.all(unlisteners).then((fns) => fns.forEach((fn) => fn()));
     };
-  }, [undo, redo, winKind.ring, winKind.picker]);
+  }, [undo, redo, winKind.ring]);
 
   return (
     <>
       {winKind.ring ? (
         <RingWindow />
-      ) : winKind.picker ? (
-        <ReplyPicker />
       ) : panel ? (
         <Panel />
       ) : (
@@ -155,7 +152,7 @@ export default function App() {
       )}
       <DialogHost />
       {/* 面板自带贴边的 Toast 容器（ToastHost variant="panel"），这里只服务管理窗口。 */}
-      {!panel && !winKind.ring && !winKind.picker && <ToastHost />}
+      {!panel && !winKind.ring && <ToastHost />}
     </>
   );
 }

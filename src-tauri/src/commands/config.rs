@@ -124,6 +124,7 @@ const RESERVED: &[(&str, &str)] = &[
     ("cmd+space", "⌘Space 是 Spotlight"),
     ("cmd+esc", "⌘⎋ 是系统的强制退出前台 App"),
     ("alt+cmd+esc", "⌥⌘⎋ 是系统的强制退出面板"),
+    ("control+c", "⌃C 是终端的中断信号（SIGINT），抢走就没法中断命令"),
     ("cmd+shift+3", "⌘⇧3 是系统截屏"),
     ("cmd+shift+4", "⌘⇧4 是系统截屏"),
     ("cmd+shift+5", "⌘⇧5 是系统截屏/录屏"),

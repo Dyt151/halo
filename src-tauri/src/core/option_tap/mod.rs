@@ -216,20 +216,30 @@ mod macos {
     use std::ffi::c_void;
     use std::sync::atomic::AtomicPtr;
 
-    /// 事件类型（CGEventType）：左键按下 / 松开 / 拖拽 + 修饰键变化。
+    /// 事件类型（CGEventType）：左键按下 / 松开 / 拖拽 + 修饰键变化 + 键盘。
     const LEFT_DOWN: u32 = 1;
     const LEFT_UP: u32 = 2;
     const LEFT_DRAG: u32 = 6;
+    const KEY_DOWN: u32 = 10;
     const FLAGS_CHANGED: u32 = 12;
     /// 系统因超时/用户输入主动禁用 tap 时回调收到的伪事件类型。
     const TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
     const TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 
-    /// 左键三件套 + 修饰键变化（后者只用来在其他 App 空闲时预取选中项）。
-    const MASK: u64 = (1 << LEFT_DOWN) | (1 << LEFT_UP) | (1 << LEFT_DRAG) | (1 << FLAGS_CHANGED);
+    /// 左键三件套 + 修饰键变化（后者只用来在其他 App 空闲时预取选中项）
+    /// + 按键（拖拽期间的 Esc 取消）。
+    const MASK: u64 = (1 << LEFT_DOWN)
+        | (1 << LEFT_UP)
+        | (1 << LEFT_DRAG)
+        | (1 << KEY_DOWN)
+        | (1 << FLAGS_CHANGED);
 
     /// 修饰键位（CGEventFlags）。
     const FLAG_OPTION: u64 = 1 << 19;
+    const FLAG_COMMAND: u64 = 1 << 20;
+
+    /// 虚拟键码：Esc = 53（`kVK_Escape`）。
+    const KEY_ESC: i64 = 53;
 
     /// 上一次观察到的 Option 状态，用于只处理「按下」那一次。
     static OPTION_DOWN: AtomicBool = AtomicBool::new(false);
@@ -260,6 +270,7 @@ mod macos {
         fn CGEventTapEnable(tap: *mut c_void, enable: bool);
         fn CGEventGetFlags(event: *mut c_void) -> u64;
         fn CGEventGetLocation(event: *mut c_void) -> CGPoint;
+        fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -364,6 +375,7 @@ mod macos {
                 event
             }
             LEFT_DRAG => unsafe { on_drag(event) },
+            KEY_DOWN => unsafe { on_key(event) },
             FLAGS_CHANGED => {
                 unsafe { on_flags(event) };
                 event
@@ -480,6 +492,34 @@ mod macos {
         }
         RingManager::drag_pointer(p.x, p.y);
         std::ptr::null_mut()
+    }
+
+    /// 拖拽期间的按键：Esc 取消，其余放行。
+    ///
+    /// 带 Cmd 的组合键放行（Cmd+Tab 是系统切换器，吞掉等于抢用户的操作）；
+    /// 吞掉后 **TAKEN 保持 true** 直到松手：Finder 只收到 down + up，把这次
+    /// 操作当成一次单击，不会中途启动真实拖拽（与拖拽事件的吞法同一套逻辑）。
+    unsafe fn on_key(event: *mut c_void) -> *mut c_void {
+        if !TAKEN.load(Ordering::SeqCst) {
+            return event;
+        }
+        let flags = CGEventGetFlags(event);
+        if flags & FLAG_COMMAND != 0 {
+            return event;
+        }
+        let keycode = CGEventGetIntegerValueField(event, 9); // kCGKeyboardEventKeycode
+        let autorepeat = CGEventGetIntegerValueField(event, 8); // kCGKeyboardEventAutorepeat
+        if autorepeat != 0 {
+            return event;
+        }
+        match keycode {
+            KEY_ESC => {
+                tracing::info!("Option+拖动：Esc 取消");
+                RingManager::cancel();
+                std::ptr::null_mut()
+            }
+            _ => event,
+        }
     }
 
     /// 松手：放行给 Finder（它没收到移动，会把这次操作当成单击选中），

@@ -55,7 +55,8 @@ impl SensitivityDetector {
         if short {
             let lower = trimmed.to_lowercase();
 
-            // 明确的密钥/token 前缀。
+            // 明确的密钥/token 前缀与敏感词（含中文常见写法；策略默认是
+            // 「入库并标记」，误报只会多打一个标记，不会丢内容）。
             const PREFIXES: &[&str] = &[
                 "eyj",                      // JWT
                 "ghp_", "gho_", "ghs_",     // GitHub token
@@ -65,6 +66,7 @@ impl SensitivityDetector {
                 "-----begin ",              // PEM 私钥
                 "ssh-rsa ", "ssh-ed25519 ", "ssh-dss ",
                 "gpg-", "password", "passwd", "pwd", "secret", "token",
+                "密码", "口令", "密钥", "令牌", "私钥",
             ];
             for prefix in PREFIXES {
                 if lower.starts_with(prefix) || lower.contains(prefix) {
@@ -72,23 +74,32 @@ impl SensitivityDetector {
                 }
             }
 
-            // 形如 key=value 且 key 命中敏感词。
+            // 形如 key=value 且 key 命中敏感词（兼容 `=`、中文冒号、英文冒号）。
             for line in trimmed.lines().take(20) {
-                if let Some((k, v)) = line.split_once('=') {
-                    let k = k.trim().to_lowercase();
-                    let v = v.trim();
-                    let key_hit = ["password", "passwd", "pwd", "secret", "token", "api_key", "apikey", "access_key"]
-                        .iter()
-                        .any(|kw| k.contains(kw));
-                    if key_hit && !v.is_empty() {
-                        return SensitivityResult::flagged(format!("credential pair: {k}=..."));
-                    }
+                let Some((k, v)) = split_pair(line) else { continue };
+                let k = k.trim().to_lowercase();
+                let v = v.trim();
+                let key_hit = [
+                    "password", "passwd", "pwd", "secret", "token", "api_key", "apikey",
+                    "access_key", "密码", "口令", "密钥",
+                ]
+                .iter()
+                .any(|kw| k.contains(kw));
+                if key_hit && !v.is_empty() {
+                    return SensitivityResult::flagged(format!("credential pair: {k}=..."));
                 }
             }
         }
 
         SensitivityResult::clean()
     }
+}
+
+/// 按优先级切分 `key=value` / `key：value` / `key: value`。
+fn split_pair(line: &str) -> Option<(&str, &str)> {
+    line.split_once('=')
+        .or_else(|| line.split_once('：'))
+        .or_else(|| line.split_once(':'))
 }
 
 impl Default for SensitivityDetector {
@@ -103,7 +114,8 @@ impl Default for SensitivityDetector {
 /// 走这里。迁移入口曾自己写 `sensitive: false` 然后直接插入，于是 iCopy 里的
 /// 密码会绕过脱敏明文入库，还会因为「非敏感」而被同步到云端。
 ///
-/// `None` 表示按策略丢弃（`Ignore`）。
+/// `None` 表示按策略丢弃（`Ignore`）。`Flag`（默认）原样入库只打标记：
+/// 启发式规则有误报，静默丢条的代价大于多一个 `sensitive` 标记。
 pub fn apply(
     detector: &SensitivityDetector,
     policy: SensitivityPolicy,
@@ -119,6 +131,7 @@ pub fn apply(
             tracing::debug!("sensitivity=encrypt 暂未实现本地加密，本条按脱敏处理");
             Some((true, mask(&content)))
         }
+        // Flag 与所有非敏感内容：原样入库，`sensitive` 只作标记。
         _ => Some((flagged, content)),
     }
 }

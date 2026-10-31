@@ -14,7 +14,10 @@ fn parse(s: &str) -> Shortcut {
 #[test]
 fn resolve_toggle() {
     let c = Config::default();
-    assert_eq!(resolve_action(&c, &parse("Control+C")), Some(HotkeyAction::Toggle));
+    assert_eq!(
+        resolve_action(&c, &parse("Control+Option+C")),
+        Some(HotkeyAction::Toggle)
+    );
 }
 
 #[test]

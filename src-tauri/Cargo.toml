@@ -52,7 +52,7 @@ dirs = "6"
 semver = { version = "1", features = ["serde"] }
 async-trait = "0.1"
 base64 = "0.22"
-# 格式转换：图片编解码（PNG/JPEG/GIF/WebP/BMP/TIFF 互转）。
+# 格式转换：图片编解码（png/jpg/webp/gif/bmp/tiff 互转；heic 走系统 sips 引擎）。
 image = { version = "0.25", default-features = false, features = [
     "png",
     "jpeg",
@@ -61,16 +61,12 @@ image = { version = "0.25", default-features = false, features = [
     "bmp",
     "tiff",
 ] }
-# 格式转换：Markdown → HTML。
-pulldown-cmark = "0.12"
-# 快捷回复：Excel 导出（xlsx 写入）。
-rust_xlsxwriter = "0.9"
-# 快捷回复：Excel 导入（xlsx 读取）。
-calamine = "0.31"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = "0.2"
+# 面板的全屏 Space 宿主（NSPanel）需要 CGRect 参与 msg_send。
+objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
 
 [profile.release]
 codegen-units = 1

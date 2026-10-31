@@ -4,12 +4,15 @@
  * 不再有自带的顶部 tab / 第二套侧边栏：当前分区由 `section` 传入，
  * 本组件只负责渲染对应分区。通用/剪贴板共用一份带防抖自动保存的草稿；
  * 其余分区（右键/同步/权限/关于/环形转换/历史）为自含组件。
- * 快捷键 / 快捷回复 / 模块 三个分区已下线，侧边栏不再给出入口。
+ * 快捷回复 / 模块 分区已下线，侧边栏不再给出入口；快捷键分区已恢复
+ * （HotkeySettings，含录制与系统注册结果回显）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import ContextMenuSettings from "../components/ContextMenuSettings";
+import HotkeySettings from "../components/HotkeySettings";
 import PermissionCenter from "../components/PermissionCenter";
 import SyncSettings from "../components/SyncSettings";
+import BackupSettings from "../components/BackupSettings";
 import RingSettings from "./RingSettings";
 import HistoryPage from "./HistoryPage";
 import type { MainPage } from "../lib/windows";
@@ -26,7 +29,6 @@ import {
   CloseButton,
   Divider,
   Input,
-  Kbd,
   Notice,
   Pill,
   Row,
@@ -179,6 +181,8 @@ export default function Settings({ section }: { section: MainPage }) {
         return <ContextMenuSettings />;
       case "sync":
         return <SyncSettings />;
+      case "backup":
+        return <BackupSettings />;
       case "permissions":
         return <PermissionCenter />;
       case "about":
@@ -308,10 +312,6 @@ export default function Settings({ section }: { section: MainPage }) {
           <div className="grid grid-cols-1 items-start gap-[16px] md:grid-cols-2">
             <CardGroup title="面板" subtitle="快捷键唤出的悬浮横条">
               <div className="space-y-[2px]">
-                <Row label="唤起/关闭面板">
-                  <Kbd>{draft.hotkeys.toggle || "Control+C"}</Kbd>
-                </Row>
-                <Divider />
                 <SelectRow
                   label="出现位置"
                   value={draft.board_position}
@@ -335,6 +335,28 @@ export default function Settings({ section }: { section: MainPage }) {
                     onChange={(v) => update({ board_height_scale: v })}
                   />
                 </div>
+                <Divider />
+                <SelectRow
+                  label="卡片排列"
+                  value={draft.board_style}
+                  options={[
+                    { value: "horizontal", label: "横向" },
+                    { value: "vertical", label: "纵向" },
+                  ]}
+                  onChange={(v) => update({ board_style: v })}
+                  width="w-[120px]"
+                />
+                <Divider />
+                <SelectRow
+                  label="文本预览"
+                  value={draft.text_preview}
+                  options={[
+                    { value: "rich", label: "富文本" },
+                    { value: "plain", label: "纯文本" },
+                  ]}
+                  onChange={(v) => update({ text_preview: v })}
+                  width="w-[120px]"
+                />
               </div>
             </CardGroup>
 
@@ -354,7 +376,7 @@ export default function Settings({ section }: { section: MainPage }) {
                 <Divider />
                 <ToggleRow
                   label="粘贴前去除尾部空白"
-                  hint="回贴文本时去掉末尾的空行/空格（对标 iCopy）"
+                  hint="回贴文本时去掉末尾的空行/空格"
                   checked={draft.paste_trim_trailing}
                   onChange={(v) => update({ paste_trim_trailing: v })}
                 />
@@ -374,43 +396,15 @@ export default function Settings({ section }: { section: MainPage }) {
                 />
               </div>
             </CardGroup>
-
-            <CardGroup title="显示设置">
-              <div className="space-y-[12px]">
-                <SelectRow
-                  label="卡片排列"
-                  value={draft.board_style}
-                  options={[
-                    { value: "horizontal", label: "横向" },
-                    { value: "vertical", label: "纵向" },
-                  ]}
-                  onChange={(v) => update({ board_style: v })}
-                  width="w-[120px]"
-                />
-                <SelectRow
-                  label="文本预览"
-                  value={draft.text_preview}
-                  options={[
-                    { value: "rich", label: "富文本" },
-                    { value: "plain", label: "纯文本" },
-                  ]}
-                  onChange={(v) => update({ text_preview: v })}
-                  width="w-[120px]"
-                />
-              </div>
-            </CardGroup>
-
-            <CardGroup title="剪贴板堆栈" subtitle="收集多条后统一粘贴">
-              <Row label="粘贴栈顶" hint="全局快捷键，设置里不再提供改键入口">
-                <Kbd>{draft.hotkeys.stack_paste}</Kbd>
-              </Row>
-              <div className="mt-[12px] border-t border-white/[0.08] pt-[12px]">
-                <StackPanel />
-              </div>
-            </CardGroup>
           </div>
 
-          <CardGroup title="历史记录限制">
+          <CardGroup title="剪贴板堆栈" subtitle="收集多条后统一粘贴">
+            <StackPanel />
+          </CardGroup>
+
+          <HotkeySettings />
+
+          <CardGroup title="存储与监控" subtitle="保留多少、扫描多勤；修改后立即生效">
             <div className="grid grid-cols-1 items-start gap-[24px] md:grid-cols-2">
               <div className="space-y-[12px]">
                 <SliderRow
@@ -447,11 +441,7 @@ export default function Settings({ section }: { section: MainPage }) {
                   ticks={TTL_OPTIONS.map((o) => o.label)}
                 />
               </div>
-            </div>
-          </CardGroup>
 
-          <CardGroup title="监控与容量" subtitle="影响记录灵敏度与占用；修改后立即生效">
-            <div className="grid grid-cols-1 items-start gap-[24px] md:grid-cols-2">
               <div className="space-y-[12px]">
                 <SliderRow
                   label="最多保留条目"
@@ -463,9 +453,8 @@ export default function Settings({ section }: { section: MainPage }) {
                   onChange={(v) => update({ max_items: v })}
                 />
               </div>
+
               <div className="space-y-[12px]">
-                {/* 评审 G7：max_items / poll_interval_ms / sensitivity 后端早已生效，
-                    但设置页没有任何入口。扫描间隔调整后会重启监控器（S2）。 */}
                 <SliderRow
                   label="扫描间隔"
                   value={draft.poll_interval_ms}
@@ -478,15 +467,14 @@ export default function Settings({ section }: { section: MainPage }) {
                 />
               </div>
             </div>
-            <div className="mt-[12px] border-t border-white/[0.08] pt-[8px]">
+            <div className="mt-[16px] border-t border-white/[0.08] pt-[12px]">
               <SelectRow
                 label="敏感内容策略"
-                hint="「加密」尚未启用本地加密，暂与「脱敏」同效"
                 value={draft.sensitivity}
                 options={[
+                  { value: "flag", label: "入库并标记" },
                   { value: "ignore", label: "不入库" },
                   { value: "mask", label: "脱敏后入库" },
-                  { value: "encrypt", label: "加密后入库" },
                 ]}
                 onChange={(v) => update({ sensitivity: v as Config["sensitivity"] })}
                 width="w-[140px]"
@@ -660,7 +648,7 @@ function AboutSection() {
       <CardGroup title="后台运行">
         <ul className="space-y-[8px] text-[12px]/[18px] text-white/60">
           <li>· ClipBase 不占 Dock、不驻菜单栏，关掉窗口只是隐藏，进程继续监听剪贴板。</li>
-          <li>· 需要时用快捷键（默认 ⌃C）唤出剪贴板面板，面板右上角的齿轮就是本设置页。</li>
+          <li>· 需要时用快捷键（默认 ⌃⌥C）唤出剪贴板面板，面板右上角的齿轮就是本设置页。</li>
           <li>· 要彻底停止，点下面的「退出 ClipBase」，或在任一窗口聚焦时按 ⌘Q。</li>
         </ul>
         <div className="mt-[12px]">
@@ -790,13 +778,27 @@ function StackPanel() {
   const empty = ids.length === 0;
 
   return (
-    <div className="space-y-[8px]">
-      <Row label={`堆栈条目 ${ids.length} 条`}>
-        <div className="flex items-center gap-[6px]">
-          <span className="text-[12px] text-white/45">锁定</span>
-          <Switch checked={locked} onChange={(v) => void toggleLock(v)} label="锁定堆栈" />
+    <div className="space-y-[10px]">
+      <div className="flex flex-wrap items-center justify-between gap-[12px]">
+        <div className="flex items-center gap-[16px]">
+          <span className="text-[13px]/[18px] text-white/85">堆栈条目 {ids.length} 条</span>
+          <div className="flex items-center gap-[6px]">
+            <span className="text-[12px] text-white/45">锁定</span>
+            <Switch checked={locked} onChange={(v) => void toggleLock(v)} label="锁定堆栈" />
+          </div>
         </div>
-      </Row>
+        <div className="flex flex-wrap gap-[6px]">
+          <Btn size="sm" disabled={empty || busy} onClick={() => void pasteFirst()}>
+            发送第一条
+          </Btn>
+          <Btn size="sm" disabled={empty || busy} onClick={() => void pasteAll()}>
+            发送全部
+          </Btn>
+          <Btn size="sm" disabled={empty || busy} onClick={() => void clear()}>
+            清空
+          </Btn>
+        </div>
+      </div>
 
       {empty ? (
         <p className="text-[12px]/[16px] text-white/45">堆栈为空，可在历史列表右键「加入堆栈」。</p>
@@ -811,18 +813,6 @@ function StackPanel() {
           {ids.length > 5 && <li className="text-[12px] text-white/40">…等 {ids.length} 条</li>}
         </ul>
       )}
-
-      <div className="flex flex-wrap gap-[6px]">
-        <Btn size="sm" disabled={empty || busy} onClick={() => void pasteFirst()}>
-          发送第一条
-        </Btn>
-        <Btn size="sm" disabled={empty || busy} onClick={() => void pasteAll()}>
-          发送全部
-        </Btn>
-        <Btn size="sm" disabled={empty || busy} onClick={() => void clear()}>
-          清空
-        </Btn>
-      </div>
 
       {message && <p className="text-[12px]/[16px] text-white/45">{message}</p>}
     </div>

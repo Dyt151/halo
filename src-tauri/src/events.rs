@@ -20,6 +20,8 @@ pub const MODULE_CRASHED: &str = "module://crashed";
 pub const MODULE_CHANGED: &str = "module://changed";
 /// 配置发生变化。
 pub const CONFIG_CHANGED: &str = "config://changed";
+/// 一次粘贴已成功完成（前端据此决定是否播完动画收起面板）。
+pub const PASTE_FINISHED: &str = "clipboard://paste-finished";
 /// 模块向核心发布的总线事件（广播给前端）。
 pub const MODULE_EVENT: &str = "module://event";
 /// 模块向核心发送请求并期待核心响应（RPC）。

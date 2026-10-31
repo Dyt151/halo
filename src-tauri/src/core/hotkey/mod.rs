@@ -1,12 +1,12 @@
 //! 全局快捷键管理：基于 `tauri-plugin-global-shortcut`。
 //!
-//! 只注册真正需要「在其它 App 里也生效」的组合：隐藏面板 / 粘贴堆栈顶 /
-//! 快捷回复。注册时单个冲突不影响其它快捷键（容错并记录错误日志）。
+//! 只注册真正需要「在其它 App 里也生效」的组合：隐藏面板 / 粘贴堆栈顶。
+//! 注册时单个冲突不影响其它快捷键（容错并记录错误日志）。
 //!
 //! 注：「打开堆栈」快捷键已移除（没有对应的堆栈面板，按下却会直接粘贴栈顶，
 //! 属文案与行为背离的误粘贴风险）。堆栈只保留「粘贴栈顶」。
 //! 环形转换也**不**提供快捷键：运行态唯一入口是 Finder 里 Option＋左键拖动
-//! （`docs/REA-Filee-Ring-Integrated.md` §3.1）。
+//! （`docs/REA-Filee-Ring-Integrated.md` §3.1）。快捷回复已下线（自用不需要）。
 //!
 //! ⌘1~9 **不是**全局快捷键：全局注册会直接抢走所有 App 的 ⌘1~9（浏览器切标签、
 //! 邮件切账号全失效）。它只在面板唤出时生效，由面板自己处理键盘事件。
@@ -28,7 +28,7 @@ use crate::lock_ext::LockExt;
 /// 现在逐槽返回结果，前端可以把失败原因直接标在对应输入框下方。
 #[derive(Debug, Clone, Serialize)]
 pub struct HotkeySlotResult {
-    /// 槽位：`toggle` / `stack_paste` / `reply_picker`。
+    /// 槽位：`toggle` / `stack_paste`。
     /// （⌘1~9 不在全局注册范围内，因此没有对应槽位。）
     pub slot: String,
     pub accelerator: String,
@@ -43,8 +43,6 @@ pub enum HotkeyAction {
     Toggle,
     /// 粘贴堆栈顶。
     StackPaste,
-    /// 唤起快捷回复选择器（任务 7：回复要有独立全局入口）。
-    ReplyPicker,
 }
 
 /// 将按下的快捷键解析为对应动作；无法匹配时返回 `None`。
@@ -55,9 +53,6 @@ pub fn resolve_action(config: &Config, shortcut: &Shortcut) -> Option<HotkeyActi
     }
     if config.stack_enabled && parse_eq(&hotkeys.stack_paste, shortcut) {
         return Some(HotkeyAction::StackPaste);
-    }
-    if parse_eq(&hotkeys.reply_picker, shortcut) {
-        return Some(HotkeyAction::ReplyPicker);
     }
     None
 }
@@ -119,7 +114,6 @@ impl HotkeyManager {
         for (slot, accelerator) in [
             ("toggle", config.hotkeys.toggle.as_str()),
             ("stack_paste", config.hotkeys.stack_paste.as_str()),
-            ("reply_picker", config.hotkeys.reply_picker.as_str()),
         ] {
             let accelerator = accelerator.trim();
             if accelerator.is_empty() {

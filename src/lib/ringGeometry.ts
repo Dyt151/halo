@@ -162,8 +162,8 @@ export const RING_SIDE = 2 * (RING_GEOM.R + RING_GEOM.popOut + 14);
 /* 设置页圆环编辑器的顺序运算（docs/REA-Filee-Ring-Integrated.md §2.3）   */
 /* ------------------------------------------------------------------ */
 
-/** 每个 Profile 最多几个扇区（Filee `MaxSlices`，与 Rust `MAX_PROFILE_SLICES` 同值）。 */
-export const MAX_SLICES = 12;
+/** 每个 Profile 最多几个扇区（与 Rust `MAX_PROFILE_SLICES` 同值）。 */
+export const MAX_SLICES = 16;
 /** 拖动阈值：超过 5px 才算拖动，否则当点击（规范 §1.2）。 */
 export const DRAG_THRESHOLD = 5;
 

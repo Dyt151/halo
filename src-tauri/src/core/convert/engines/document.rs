@@ -1,8 +1,6 @@
-//! 图片 → 文档引擎：把一张图变成「能打开的文档」。
+//! 图片 → 文档引擎：把一张图变成自包含的 HTML 页面。
 //!
-//! 两种产物的语义**不同**，必须说清楚（§5.1 / 验收 P0 最后一条）：
-//! - **HTML**：图片以 base64 data URI **真正内联**，产物是自包含的单文件；
-//! - **Markdown**：只写一行 `![](路径)`，**引用**源图，移动或删除源图就会失效。
+//! 图片以 base64 data URI **真正内联**，产物是自包含的单文件（§5.1 / 验收 P0）。
 //!
 //! 因此 HTML 只接浏览器能直接渲染的图片格式（PNG/JPG/WebP/GIF）；TIFF、BMP
 //! 会由路由器先转成 PNG（`tiff → png → html`，两步），而不是塞一个浏览器打不开
@@ -56,14 +54,6 @@ impl ConverterEngine for DocumentEngine {
     fn edges(&self) -> Vec<ConversionEdge> {
         let mut out = Vec::new();
         for from in super::super::format::IMAGE_FORMATS {
-            // 引用式：任何图片都能被引用。
-            out.push(ConversionEdge::new(
-                from,
-                ConvertFormat::Md,
-                EngineId::Document,
-                20,
-                EdgeMode::Terminal,
-            ));
             if HTML_EMBEDDABLE.contains(&from) {
                 out.push(ConversionEdge::new(
                     from,
@@ -86,19 +76,11 @@ impl ConverterEngine for DocumentEngine {
             .to_string();
 
         let content = match step.to {
-            ConvertFormat::Md => {
-                let reference = markdown_reference(step.original, step.output);
-                format!(
-                    "![{}]({})\n",
-                    escape_md_text(&title),
-                    escape_md_url(&reference)
-                )
-            }
             ConvertFormat::Html => {
                 if let Ok(meta) = std::fs::metadata(step.input) {
                     if meta.len() > MAX_INLINE_BYTES {
                         return Err(ConvertError::io(format!(
-                            "图片太大（{:.0} MB），内联成 HTML 上限 {} MB（可改用 Markdown 引用）",
+                            "图片太大（{:.0} MB），内联成 HTML 上限 {} MB",
                             meta.len() as f64 / (1024.0 * 1024.0),
                             MAX_INLINE_BYTES / (1024 * 1024)
                         )));
@@ -120,34 +102,9 @@ impl ConverterEngine for DocumentEngine {
         std::fs::write(step.output, content)
             .map_err(|e| ConvertError::io(format!("写入文件失败：{e}")))?;
 
-        let warnings = match step.to {
-            // 产物只是引用，不是自包含文档——别让用户以为图片被拷进去了。
-            ConvertFormat::Md => vec![format!(
-                "生成的是引用源图的 Markdown：图片没有被复制，移动或删除 {} 会让它失效",
-                step.original
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("源图")
-            )],
-            ConvertFormat::Html => vec!["图片已内联为 base64，HTML 是自包含的".to_string()],
-            _ => Vec::new(),
-        };
-
-        Ok(StepOutput { warnings })
-    }
-}
-
-/// Markdown 里的图片引用：同目录用文件名（随文件夹搬走仍能用），否则绝对路径。
-fn markdown_reference(original: &Path, output: &Path) -> String {
-    let same_dir = output.parent() == original.parent();
-    if same_dir {
-        original
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| original.to_string_lossy().to_string())
-    } else {
-        original.to_string_lossy().to_string()
+        Ok(StepOutput {
+            warnings: vec!["图片已内联为 base64，HTML 是自包含的".to_string()],
+        })
     }
 }
 
@@ -183,27 +140,18 @@ fn mime_of(format: ConvertFormat) -> &'static str {
     }
 }
 
-/// Markdown 链接文字转义：`]` 不转义会让链接提前闭合。
-fn escape_md_text(text: &str) -> String {
-    text.replace('\\', "\\\\").replace(']', "\\]")
-}
-
-/// Markdown 链接地址转义：空格与括号要百分号编码。
-fn escape_md_url(url: &str) -> String {
-    url.replace(' ', "%20")
-        .replace('(', "%28")
-        .replace(')', "%29")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::convert::preset::{ConversionPreset, ImageOptions, OutputRule, TargetSpec};
+    use crate::core::convert::preset::{
+        ConversionPreset, ImageOptions, OutputRule, PresetKind, TargetSpec,
+    };
 
     fn preset(target: ConvertFormat) -> ConversionPreset {
         ConversionPreset {
             id: "t".into(),
             name: "t".into(),
+            kind: PresetKind::Convert,
             target: TargetSpec::Explicit(target),
             image: ImageOptions::default(),
             output: OutputRule::default(),
@@ -220,37 +168,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create scratch");
         dir
-    }
-
-    #[test]
-    fn markdown_output_is_a_reference_and_says_so() {
-        let dir = scratch("md");
-        let src = dir.join("pic.png");
-        image::RgbImage::new(3, 2).save(&src).expect("save");
-        let out = dir.join("pic.md");
-        let p = preset(ConvertFormat::Md);
-        let result = DocumentEngine
-            .convert(&ConversionStep {
-                input: &src,
-                output: &out,
-                from: ConvertFormat::Png,
-                to: ConvertFormat::Md,
-                final_format: ConvertFormat::Md,
-                preset: &p,
-                original: &src,
-                is_final: true,
-            })
-            .expect("convert");
-        assert_eq!(
-            std::fs::read_to_string(&out).unwrap(),
-            "![pic](pic.png)\n"
-        );
-        assert!(
-            result.warnings.iter().any(|w| w.contains("引用源图")),
-            "{:?}",
-            result.warnings
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -283,11 +200,16 @@ mod tests {
     #[test]
     fn tiff_is_not_offered_for_html_embedding() {
         let edges = DocumentEngine.edges();
-        assert!(edges
-            .iter()
-            .any(|e| e.from == ConvertFormat::Tiff && e.to == ConvertFormat::Md));
         assert!(!edges
             .iter()
             .any(|e| e.from == ConvertFormat::Tiff && e.to == ConvertFormat::Html));
+        // 但路由仍可达：TIFF 先转 PNG 再内联。
+        let route = crate::core::convert::router::plan(
+            ConvertFormat::Tiff,
+            ConvertFormat::Html,
+            false,
+        )
+        .expect("tiff → html 应有两步路由");
+        assert_eq!(route.steps.len(), 2, "{route:?}");
     }
 }

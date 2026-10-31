@@ -26,6 +26,14 @@ pub enum EngineId {
     Text,
     /// 图片 → 引用图文档。
     Document,
+    /// macOS 系统 `sips`：HEIC / JPEG 2000 / AVIF 读写与图片 ↔ PDF 桥。
+    Sips,
+    /// macOS 系统 `textutil`：TXT / HTML / DOC / DOCX / ODT / RTF 互转。
+    Textutil,
+    /// PDFKit 桥：PDF → TXT 文本提取（每页出图由动作走同一脚本）。
+    Pdfkit,
+    /// WebKit 排版：HTML → PDF（WKWebView + NSPrintOperation）。
+    Webprint,
 }
 
 impl EngineId {
@@ -34,6 +42,10 @@ impl EngineId {
             Self::Image => "image",
             Self::Text => "text",
             Self::Document => "document",
+            Self::Sips => "sips",
+            Self::Textutil => "textutil",
+            Self::Pdfkit => "pdfkit",
+            Self::Webprint => "webprint",
         }
     }
 }

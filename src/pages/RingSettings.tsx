@@ -4,7 +4,8 @@
  * 信息架构分四层，对应三层数据模型：
  * 1. 手势与权限 —— 只有 Option＋拖动一个入口；
  * 2. 文件类型 Profile —— 「拖什么文件用哪张盘」，顺序即匹配优先级；
- * 3. 当前 Profile 的圆环 —— 唯一一面的 preset_ids 编排；
+ * 3. 当前 Profile 的圆环 —— 一张盘的扇区编排（打包 / 解压 / PDF 分页等
+ *    工具动作由开关统一追加在末尾，不占这张表的 16 个名额）；
  * 4. 可用预设 / 预设编辑器 —— 一条预设就是一份完整配方。
  *
  * 运行态（拖动手势、真实转换、进度与结果）不在这里，见 `core/ring` 与
@@ -30,11 +31,19 @@ import {
 import type { ConversionPreset, ConvertFormat, GestureStatus, RingConfig, RingProfile } from "../lib/types";
 import { useClipStore } from "../store/useClipStore";
 
-type Category = "image" | "doc";
+type Category = "image" | "doc" | "tool";
 type Filter = "all" | Category;
 
 /** 图片格式（候选面板的「图片 / 文档」分类用）。 */
-const IMAGE_TARGETS: ConvertFormat[] = ["png", "jpg", "webp", "gif", "bmp", "tiff"];
+const IMAGE_TARGETS: ConvertFormat[] = [
+  "png",
+  "jpg",
+  "webp",
+  "gif",
+  "bmp",
+  "tiff",
+  "heic",
+];
 
 /**
  * 扩展名别名的**前端镜像**（与 Rust `ConvertFormat::from_ext` 同一张表）。
@@ -53,48 +62,86 @@ const KNOWN_EXTENSIONS = new Set([
   "bmp",
   "tif",
   "tiff",
-  "md",
-  "markdown",
-  "mdown",
-  "mkd",
+  "heic",
+  "heif",
+  "hif",
   "html",
   "htm",
   "xhtml",
   "txt",
   "text",
+  "pdf",
+  "docx",
+  "docm",
+  "dotx",
 ]);
 /** 单个扩展名最长多少字符（Rust `MAX_EXTENSION_LEN`）。 */
 const MAX_EXTENSION_LEN = 16;
-/** 扩展名快速填充：图片族 / 文本族。 */
-const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"];
-const TEXT_EXTS = ["md", "html", "txt"];
+/** 扩展名快速填充：图片族 / 文本族 / 文档族。 */
+const IMAGE_EXTS = [
+  "png",
+  "jpg",
+  "jpeg",
+  "jpe",
+  "webp",
+  "gif",
+  "bmp",
+  "tif",
+  "tiff",
+  "heic",
+  "heif",
+  "hif",
+];
+const TEXT_EXTS = ["html", "htm", "xhtml", "txt", "text"];
+const DOC_EXTS = ["pdf", "docx", "docm", "dotx"];
 
-/** 内置 Profile 的「恢复默认」顺序（与 Rust `RingProfile::seeds` 对齐）。 */
+/**
+ * 内置 Profile 的「恢复默认」顺序（与 Rust `preset::DEFAULT_*` / `stock()` 对齐）。
+ *
+ * 每张盘只有一面；打包 / 解压 / PDF 分页由「工具动作」开关统一追加。
+ */
 const DEFAULT_SLICES: Record<string, string[]> = {
-  images: ["img.jpg", "img.png", "img.webp", "img.gif", "img.bmp", "img.tiff"],
-  text: ["doc.md", "doc.html", "doc.txt"],
+  images: ["img.jpg", "img.png", "img.webp", "img.gif", "img.heic", "img.pdf"],
+  text: ["doc.html", "doc.txt"],
+  docs: ["img.png", "img.jpg", "doc.txt", "doc.html", "doc.docx", "doc.pdf"],
   mixed: [
     "img.jpg",
     "img.png",
-    "doc.md",
-    "doc.html",
-    "doc.txt",
     "img.webp",
     "img.gif",
     "img.bmp",
     "img.tiff",
+    "doc.html",
+    "doc.txt",
   ],
 };
 
+const ARCHIVE_LABELS: Record<string, string> = { zip: "ZIP", tar_gz: "TAR.GZ", tar: "TAR" };
+
+/** 工具动作的短说明（打包 / 解压 / PDF 分页）。 */
+function kindCaption(preset: ConversionPreset): string | null {
+  const kind = preset.kind ?? "convert";
+  if (kind === "convert") return null;
+  if (kind === "extract") return "解压成文件夹";
+  if (kind === "pdf_to_cbz") return "PDF → CBZ 漫画包";
+  if ("pack" in kind) return `整批 → 一个 ${ARCHIVE_LABELS[kind.pack.archive] ?? kind.pack.archive}`;
+  if ("pdf_pages" in kind) return `每页一张 ${kind.pdf_pages.to.toUpperCase()}`;
+  return "工具动作";
+}
+
 /** 预设副标题：目标 + 关键参数，让同目标不同质量的预设能一眼分开。 */
 function presetCaption(preset: ConversionPreset): string {
+  const kind = kindCaption(preset);
+  if (kind) return kind;
   if (preset.target === "*") return "同格式重编码";
   const label = preset.target.toUpperCase();
   if (preset.target === "jpg") return `${label} ${preset.image.jpeg_quality}% · 背景 ${preset.image.alpha_background}`;
+  if (preset.target === "pdf") return `转成 PDF${preset.output.dir ? " · 自定义目录" : ""}`;
   return preset.output.dir ? `${label} · 自定义目录` : label;
 }
 
 function presetCategory(preset: ConversionPreset): Category {
+  if ((preset.kind ?? "convert") !== "convert") return "tool";
   if (preset.target === "*") return "image";
   return IMAGE_TARGETS.includes(preset.target) ? "image" : "doc";
 }
@@ -296,6 +343,7 @@ export default function RingSettings() {
     const found = profiles.find((p) => p.id === selectedId);
     return found ?? profiles[0] ?? null;
   }, [profiles, selectedId]);
+  /** 当前盘的扇区顺序，去掉已删预设。 */
   const selectedPresetIds = useMemo(
     () => (selected ? clean(selected.preset_ids, known) : []),
     [selected, known],
@@ -525,17 +573,21 @@ export default function RingSettings() {
 
   /* ---------------- 候选面板 ---------------- */
 
-  const used = useMemo(() => new Set(selectedPresetIds), [selectedPresetIds]);
+  // 同一张盘里一个预设只能出现一次（Rust 归一化也会去重）。
+  const used = useMemo(() => new Set(selected?.preset_ids ?? []), [selected]);
+  const utilityOn = ringBase()?.utility_actions ?? true;
   const q = search.trim().toLowerCase();
   const candidates = useMemo(
     () =>
       presets.filter((p) => {
         if (used.has(p.id)) return false;
+        // 开关打开时工具动作已经固定追加在末尾，再手动放一份就会重复。
+        if (utilityOn && presetCategory(p) === "tool") return false;
         if (filter !== "all" && presetCategory(p) !== filter) return false;
         if (!q) return true;
         return p.name.toLowerCase().includes(q) || presetCaption(p).toLowerCase().includes(q);
       }),
-    [presets, used, filter, q],
+    [presets, used, utilityOn, filter, q],
   );
 
   /** 拖动中的预览顺序：与 drop 后模型完全一致（规范 §3.2）。 */
@@ -693,7 +745,7 @@ export default function RingSettings() {
                       {profile.kind === "mixed_fallback" ? "兜底" : "普通"}
                     </span>
                     <span className="text-[11px]/[16px] text-white/35">
-                      {profile.preset_ids.length} / {MAX_SLICES}
+                      {profile.preset_ids.length} 个动作
                     </span>
                     {active && <span className="text-[11px]/[16px] text-accent">· 正在编辑</span>}
                   </div>
@@ -711,7 +763,14 @@ export default function RingSettings() {
                   <Btn size="sm" disabled={index === profiles.length - 1} onClick={() => moveProfile(index, 1)}>
                     下移
                   </Btn>
-                  <Btn size="sm" onClick={() => setEditingProfile(profile.id)}>
+                  <Btn
+                    size="sm"
+                    onClick={() => {
+                      // 编辑哪张盘就让圆环预览哪张盘，否则关闭弹窗后看到的还是上一张。
+                      selectProfile(profile.id);
+                      setEditingProfile(profile.id);
+                    }}
+                  >
                     编辑
                   </Btn>
                 </div>
@@ -731,7 +790,7 @@ export default function RingSettings() {
 
       <CardGroup
         title={`圆环编排 · ${selected.name || selected.id}`}
-        subtitle="拖动扇区排序，拖到下方候选面板即移除；从候选面板拖入可插入到任意位置"
+        subtitle="拖到扇区上松手就转换；这张盘只有一面，所有动作都排在同一圈上"
       >
         <div className="mb-[10px] flex flex-wrap items-center gap-[8px]">
           <Segment
@@ -745,15 +804,25 @@ export default function RingSettings() {
             onChange={selectProfile}
           />
           <span className="ml-auto text-[12px]/[16px] text-white/40">
-            {selectedPresetIds.length} / {MAX_SLICES}
+            每张盘最多 {MAX_SLICES} 个动作
           </span>
         </div>
+
+        <ToggleRow
+          label="末尾追加工具动作"
+          hint="打包 ZIP / TAR.GZ / TAR、解压、PDF 每页转 PNG / JPG、PDF → CBZ 固定排在这张盘最后，按当前选择自动置灰不可用的那些"
+          checked={ring.utility_actions}
+          onChange={(v) => {
+            const base = ringBase();
+            if (base) commitRing({ ...base, utility_actions: v });
+          }}
+        />
 
         <RingEditor
           containerRef={ringRef}
           ids={previewIds}
           labelOf={labelOf}
-          centerTitle={`${previewIds.length} / ${MAX_SLICES}`}
+          centerTitle={`${previewIds.length} 个动作`}
           centerHint={selected.name || selected.id}
           draggingId={drag?.active && drag.source === "slice" ? drag.id : null}
           removeTargeted={removeTargeted}
@@ -765,12 +834,17 @@ export default function RingSettings() {
         />
 
         {hint && <p className="mt-[8px] text-center text-[12px]/[16px] text-amber-300/90">{hint}</p>}
-        <div className="mt-[10px] flex items-center justify-between">
-          <span className="text-[12px]/[16px] text-white/35">
+        <div className="mt-[10px] flex flex-wrap items-center justify-between gap-[8px]">
+          <span className="min-w-0 text-[12px]/[16px] text-white/35">
+            {ring.utility_actions && `末尾 7 个是工具动作，不占这 ${MAX_SLICES} 个名额 · `}
             索引 0 从 12 点开始顺时针 · hover 铅笔或右键编辑 · 扇区聚焦后 ←/→ 排序、Delete 移除
           </span>
           {DEFAULT_SLICES[selected.id] && (
-            <Btn size="sm" onClick={() => commitSlices(clean(DEFAULT_SLICES[selected.id], known))}>
+            <Btn
+              size="sm"
+              className="shrink-0 whitespace-nowrap"
+              onClick={() => commitSlices(clean(DEFAULT_SLICES[selected.id], known))}
+            >
               恢复默认
             </Btn>
           )}
@@ -779,7 +853,7 @@ export default function RingSettings() {
 
       <CardGroup
         title="可用动作"
-        subtitle="这张盘还没用到的预设；拖入圆环或双击追加到末尾"
+        subtitle="当前盘还没用到的预设；拖入圆环或双击追加到末尾"
       >
         <div ref={paletteRef} className={["rounded-[10px] transition-shadow", removeTargeted ? "ring-2 ring-danger/60" : ""].join(" ")}>
           <div className="mb-[10px] flex flex-wrap items-center gap-[8px]">
@@ -790,6 +864,7 @@ export default function RingSettings() {
                 { value: "all", label: "全部" },
                 { value: "image", label: "图片" },
                 { value: "doc", label: "文档" },
+                { value: "tool", label: "工具" },
               ]}
               value={filter}
               onChange={(v) => setFilter(v)}
@@ -864,9 +939,10 @@ export default function RingSettings() {
       </CardGroup>
 
       <p className="text-[12px]/[16px] text-white/45">
-        在 Finder 里按住 Option 拖动文件唤出圆环，把文件推到扇区上松手即执行；推到中心或环外松手取消。
-        不可用的扇区会留在原位并变暗，松手在上面不会执行、只显示原因。全程不打开主窗口、不改变
-        Finder 选择；转换时原地显示进度与结果，超过 5 秒自动收缩交给系统通知。
+        在 Finder 里按住 Option 拖动文件唤出圆环，把文件推到扇区上松手即执行；推到中心或环外松手取消，
+        拖动中按 Esc 取消。图片／文本／文档各有专属盘，没配置过的类型落到「其他文件」兜底盘。
+        不可用的扇区会留在原位并变暗，松手在上面不会执行、只显示原因。全程不打开主窗口、
+        不改变 Finder 选择；转换时原地显示进度与结果，超过 5 秒自动收缩交给系统通知。
         每次转换会记住该类别的最后动作，下次只做预高亮，不会自动执行。
       </p>
 
@@ -1010,7 +1086,7 @@ function ProfileDialog({
       onClick={close}
     >
       <div
-        className="max-h-[86vh] w-[420px] overflow-y-auto rounded-[12px] border border-white/12 bg-[#2C2C2E] p-[16px] shadow-2xl"
+        className="dialog-surface max-h-[86vh] w-[420px] overflow-y-auto rounded-[12px] p-[16px] shadow-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <Input
@@ -1027,7 +1103,7 @@ function ProfileDialog({
           }}
         />
         <div className="mt-[6px] text-[12px]/[16px] text-white/45">
-          {profile.id} · {profile.preset_ids.length} / {MAX_SLICES} 个动作
+          {profile.id} · {profile.preset_ids.length} 个动作
         </div>
 
         <Divider />
@@ -1063,6 +1139,9 @@ function ProfileDialog({
             </Btn>
             <Btn size="sm" onClick={() => setExtText(TEXT_EXTS.join(", "))}>
               文本族
+            </Btn>
+            <Btn size="sm" onClick={() => setExtText(DOC_EXTS.join(", "))}>
+              文档族
             </Btn>
             <Btn size="sm" onClick={() => setExtText("")}>
               清空
@@ -1224,7 +1303,7 @@ function PresetDialog({
       onClick={close}
     >
       <div
-        className="max-h-[86vh] w-[400px] overflow-y-auto rounded-[12px] border border-white/12 bg-[#2C2C2E] p-[16px] shadow-2xl"
+        className="dialog-surface max-h-[86vh] w-[400px] overflow-y-auto rounded-[12px] p-[16px] shadow-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <Input

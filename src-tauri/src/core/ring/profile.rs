@@ -161,6 +161,7 @@ mod tests {
             extensions: exts.iter().map(|e| e.to_string()).collect(),
             kind,
             preset_ids: Vec::new(),
+            back_ids: Vec::new(),
         }
     }
 

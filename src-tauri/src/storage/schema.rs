@@ -10,7 +10,3 @@ pub const TABLE_CONFIG: &str = "config";
 pub const TABLE_MODULES: &str = "modules";
 /// 同步游标/状态表。
 pub const TABLE_SYNC_STATE: &str = "sync_state";
-/// 快捷回复分组表。
-pub const TABLE_REPLY_GROUPS: &str = "reply_groups";
-/// 快捷回复表。
-pub const TABLE_REPLIES: &str = "replies";

@@ -203,7 +203,7 @@ export default function HistoryPage() {
           {hasFilter ? `${items.length} / ${stats.total} 条` : `${stats.total} 条`}
         </span>
 
-        <div className="ml-auto flex items-center gap-[8px]">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-[8px]">
           {selectMode ? (
             <>
               <span className="text-[12px]/[16px] tabular-nums text-white/55">
@@ -267,18 +267,22 @@ export default function HistoryPage() {
       </header>
 
       {/* 工具栏：搜索 + 类型分段（与面板一致） */}
-      <div className="flex shrink-0 items-center gap-[8px] px-[24px] pb-[10px]">
+      <div className="flex shrink-0 flex-wrap items-center gap-[8px] px-[24px] pb-[10px]">
         <SearchField
           value={keyword}
           onChange={setKeyword}
           placeholder="搜索历史"
-          width="w-[240px]"
+          width="w-[240px] min-w-[140px] max-w-full flex-1"
         />
-        <Segment
-          items={FILTERS.map((f) => ({ value: f.key, label: f.label, count: countOf(f.key) }))}
-          value={activeKey}
-          onChange={selectFilter}
-        />
+        {/* 窄窗（设置窗最小 420px、侧边栏 200px）下分段放不下时整组横向滚动，
+            而不是被 main 的 overflow-hidden 裁掉、类型筛选整组消失。 */}
+        <div className="min-w-0 max-w-full overflow-x-auto">
+          <Segment
+            items={FILTERS.map((f) => ({ value: f.key, label: f.label, count: countOf(f.key) }))}
+            value={activeKey}
+            onChange={selectFilter}
+          />
+        </div>
       </div>
 
       {/* 标签行：全集来自后端，不会因筛选而自我收窄（G2）。 */}
