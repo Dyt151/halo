@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::core::clipboard::types::{ClipContent, ClipItem};
-use crate::core::history::HistoryService;
 use crate::error::{AppError, CommandResult};
 use crate::state::AppState;
 use crate::storage::files_dir;
