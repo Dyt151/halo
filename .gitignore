@@ -5,6 +5,9 @@ node_modules/
 dist/
 release/
 src-tauri/target/
+# Finder Sync 扩展的编译产物：.appex 是签名过的二进制包，不进版本库
+# （HEAD 里曾提交过陈旧的 ClipBaseFinderExtension.appex，每次构建又多一份 diff）
+src-tauri/finder-extension/build/
 
 # --- 系统文件 ---
 .DS_Store

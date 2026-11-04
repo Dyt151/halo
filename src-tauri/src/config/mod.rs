@@ -13,6 +13,9 @@ const CONFIG_KEY: &str = "app_config";
 const MIGRATION_MARKER_KEY: &str = "migrated_v6_defaults";
 /// v7：格式裁剪后刷新出厂盘的扩展名（补 heic，去掉 md/doc/odt/rtf/mhtml）。
 const RING_FORMATS_MARKER_KEY: &str = "migrated_v7_ring_formats";
+/// v8：状态栏面板新增网络/蓝牙，旧配置的模块列表里补齐这两项（只跑一次，
+/// 用户之后自己取消勾选不会被加回来）。
+const STATUSBAR_NETWORK_MARKER_KEY: &str = "migrated_v8_statusbar_network";
 
 /// 丢掉指向已删除格式的预设（ico / qoi / md / odt …）。
 ///
@@ -46,9 +49,13 @@ fn sanitize_removed_presets(value: &mut serde_json::Value) {
 }
 
 /// v6 一次性默认值迁移：旧默认「唤起面板 Control+C」「敏感策略 ignore」改成新默认
-/// （Control+Option+C / flag）。只在标记键不存在时执行一次——`Config::migrate()`
+/// （Control+Option+C / mask）。只在标记键不存在时执行一次——`Config::migrate()`
 /// 每次加载都跑，这种会覆盖用户有意选择的重写不能放进去。迁移过就写标记键，
 /// 用户之后自己改回 ⌃C / ignore 也原样保留。
+///
+/// 敏感策略迁移到 `Mask`（脱敏入库）而不是 `Flag`：老用户若沿用旧的 `ignore`，
+/// 静默丢条目的代价大于多打一个标记，但明文落盘的代价又比两者都大——
+/// 脱敏入库既不丢条目，也不留明文。
 ///
 /// v7 一次性刷写出厂盘的扩展名表：旧配置的「图片」盘可能是在 heic 加入之前
 /// 建的，扩展名里没有 `heic`，拖 HEIC 会掉进兜底盘、找不到 HEIC 动作；同时
@@ -66,7 +73,7 @@ fn migrate_user_defaults(
             changed = true;
         }
         if config.sensitivity == settings::SensitivityPolicy::Ignore {
-            config.sensitivity = settings::SensitivityPolicy::Flag;
+            config.sensitivity = settings::SensitivityPolicy::Mask;
             changed = true;
         }
         if changed {
@@ -90,6 +97,34 @@ fn migrate_user_defaults(
             changed = true;
         }
         set_marker(conn, RING_FORMATS_MARKER_KEY)?;
+    }
+
+    if !marker_set(conn, STATUSBAR_NETWORK_MARKER_KEY)? {
+        // 空列表视为用户主动清空，不硬塞新模块。
+        if !config.statusbar.sections.is_empty() {
+            let mut sections = Vec::with_capacity(config.statusbar.sections.len() + 2);
+            let mut inserted = false;
+            for id in &config.statusbar.sections {
+                sections.push(id.clone());
+                if !inserted && id == "battery" {
+                    sections.push("network".to_string());
+                    sections.push("bluetooth".to_string());
+                    inserted = true;
+                }
+            }
+            if !inserted {
+                sections.splice(0..0, ["network".to_string(), "bluetooth".to_string()]);
+            }
+            let mut seen = std::collections::HashSet::new();
+            sections.retain(|id| seen.insert(id.clone()));
+            if sections != config.statusbar.sections {
+                config.statusbar.sections = sections;
+                config.statusbar.normalize();
+                persist_config(conn, config)?;
+                changed = true;
+            }
+        }
+        set_marker(conn, STATUSBAR_NETWORK_MARKER_KEY)?;
     }
 
     Ok(changed)
@@ -339,5 +374,36 @@ mod tests {
             profile(&mut config, "images").extensions,
             vec!["png".to_string()]
         );
+    }
+
+    /// v8 只把网络/蓝牙并进旧列表一次；用户之后取消勾选不会被加回来。
+    #[test]
+    fn v8_adds_network_and_bluetooth_once() {
+        let conn = memory_db();
+        let mut config = Config::default();
+        config.migrate();
+        config.statusbar.sections = vec![
+            "battery".into(),
+            "volume".into(),
+            "audio_input".into(),
+            "input_source".into(),
+        ];
+
+        assert!(migrate_user_defaults(&conn, &mut config).expect("v8 迁移"));
+        assert_eq!(
+            config.statusbar.sections,
+            vec![
+                "battery".to_string(),
+                "network".to_string(),
+                "bluetooth".to_string(),
+                "volume".to_string(),
+                "audio_input".to_string(),
+                "input_source".to_string(),
+            ]
+        );
+
+        config.statusbar.sections.retain(|id| id != "bluetooth");
+        assert!(!migrate_user_defaults(&conn, &mut config).expect("第二次迁移"));
+        assert!(!config.statusbar.sections.iter().any(|id| id == "bluetooth"));
     }
 }

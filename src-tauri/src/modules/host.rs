@@ -458,12 +458,17 @@ impl ModuleHost {
     }
 
     /// 向运行中的 sidecar 模块广播事件通知（JSON-RPC notification）。
+    ///
+    /// 仅投递给已被授权 `ClipboardRead` 能力的模块：当前调用点（`state.rs` 的
+    /// `CLIPBOARD_CHANGED`）携带完整剪贴板条目，属于敏感载荷，零权限模块不应收到。
+    /// 原先会无条件广播给所有 running sidecar，等于任何模块都能读全部剪贴板。
     pub fn broadcast(&self, topic: &str, payload: Value) {
         let handles: Vec<Arc<SidecarHandle>> = {
             let instances = self.instances.lock_ok();
             instances
                 .values()
                 .filter(|i| i.state() == ModuleState::Running)
+                .filter(|i| self.gate.check(i.id(), Capability::ClipboardRead))
                 .filter_map(|i| i.sidecar_handle())
                 .collect()
         };
@@ -567,7 +572,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "clipbase-modhost-{}-{name}-{}",
+            "halo-modhost-{}-{name}-{}",
             std::process::id(),
             SEQ.fetch_add(1, Ordering::Relaxed)
         ));
@@ -596,7 +601,7 @@ mod tests {
     fn host_at(root: &Path) -> (ModuleHost, PathBuf) {
         let modules_dir = root.join("modules");
         std::fs::create_dir_all(&modules_dir).unwrap();
-        let db = crate::storage::db::open(&root.join("data").join("clipbase.db")).unwrap();
+        let db = crate::storage::db::open(&root.join("data").join("halo.db")).unwrap();
         let host = ModuleHost::new(
             Arc::new(Mutex::new(db)),
             modules_dir.clone(),
@@ -610,14 +615,14 @@ mod tests {
     #[test]
     fn modules_dropped_into_the_dir_are_adopted() {
         let root = scratch("adopt");
-        let pkg = root.join("modules").join("com.clipbase.demo");
+        let pkg = root.join("modules").join("com.halo.demo");
         std::fs::create_dir_all(&pkg).unwrap();
-        std::fs::write(pkg.join("module.json"), manifest_json("com.clipbase.demo")).unwrap();
+        std::fs::write(pkg.join("module.json"), manifest_json("com.halo.demo")).unwrap();
 
         let (host, _) = host_at(&root);
         let list = host.list().unwrap();
         assert_eq!(list.len(), 1, "{list:?}");
-        assert_eq!(list[0].id, "com.clipbase.demo");
+        assert_eq!(list[0].id, "com.halo.demo");
         // 自动登记必须是「未启用」：不能绕过授权直接跑起来。
         assert!(!list[0].enabled);
         assert!(list[0].grants.is_empty());
@@ -631,9 +636,9 @@ mod tests {
         let root = scratch("in-place");
         let (host, modules_dir) = host_at(&root);
         // host 起来之后才放模块，模拟运行中手放（启动时 adopt 看不到）。
-        let pkg = modules_dir.join("com.clipbase.late");
+        let pkg = modules_dir.join("com.halo.late");
         std::fs::create_dir_all(&pkg).unwrap();
-        std::fs::write(pkg.join("module.json"), manifest_json("com.clipbase.late")).unwrap();
+        std::fs::write(pkg.join("module.json"), manifest_json("com.halo.late")).unwrap();
 
         host.install(&pkg).expect("原地安装应当成功");
         assert!(pkg.join("module.json").exists(), "源目录被删掉了");

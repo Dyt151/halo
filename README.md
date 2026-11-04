@@ -1,32 +1,36 @@
-# ClipBase
+# Halo
 
-macOS 上的剪贴板工具。只做三件事：
+macOS 上的剪贴板工具。围绕剪贴板做四件事：
 
 1. **剪贴板**——自动记录你复制过的一切，用快捷键唤出面板，回车贴回去。
 2. **右键菜单**——在 Finder 和桌面空白处右键，直接新建文件、打开终端。
 3. **环形文件转换**——按住 Option 从文件上拖一下，松手在某个扇区就换格式。
+4. **状态栏控制中心**——驻留菜单栏，集中呈现电量、蓝牙、音量、输入法、网络等系统状态，并可一键「充到满」。
 
-技术上是 Tauri 2（Rust 后端 + React 前端），数据全在本机 `~/.clipbase`，不联网也能用。
+技术上是 Tauri 2（Rust 后端 + React 前端），数据全在本机 `~/.halo`。「剪贴板 / 右键 / 环形转换」完全离线可用；「状态栏」会读取系统电量等状态信息（不向外发送）。
 
 ---
 
-## 三个功能一览
+## 四个功能一览
 
 | 功能 | 解决的问题 | 入口 | 关键实现 |
 | --- | --- | --- | --- |
 | 剪贴板 | 复制过的东西找不回来 | 全局快捷键唤出悬浮面板 | 轮询 `changeCount` + SQLite/FTS5 + `enigo` 注入 `⌘V` |
 | 右键菜单 | 右键菜单里没有「新建文件 / 在终端打开」 | Finder 右键、桌面空白右键 | Finder Sync 扩展 + 文件队列桥；桌面用 `CGEventTap` + `NSMenu` |
 | 环形文件转换 | 只是想换个格式，却要开预览/在线转换 | 在 Finder 里按住 `Option`＋左键拖动文件 | 文件类型 Profile → 预设 → Dijkstra 路由 → 引擎 → 原子落盘 |
+| 状态栏控制中心 | 系统状态散落在各处菜单，缺乏一处总览 | 菜单栏图标常驻 | `core/statusbar/` 原生模块（电池 / SMC / 蓝牙 / 音量 / 输入法 / 网络）+ PowerUI 私有桥实现「充到满」 |
 
 ---
 
 ## 已知限制
 
-在开源发布或评估前，请先了解这两点，避免误判：
+在开源发布或评估前，请先了解这几点，避免误判：
 
-1. **端到端加密尚未落地**。多端同步（WebDAV）的 `chacha20poly1305` + `argon2` 端到端加密只在设计文档里定义，**当前版本实际未实现**。敏感内容策略选「加密后入库」时会**降级为脱敏**（写成 `[敏感内容已脱敏 <hash 前 8 位>]`），不会按明文保存——但这不等于真加密。请勿把「支持加密同步」当作已交付能力。
+1. **端到端加密（同步）已落地，本地敏感加密未落地**。多端同步（WebDAV）的 `chacha20poly1305` + `argon2` 端到端加密**已在 `sync/crypto.rs` 实现并接入同步链路**。但「本地把敏感内容加密入库」（`SensitivityPolicy::Encrypt`）**尚未实现**：选择该策略时会**降级为脱敏**（写成 `[敏感内容已脱敏 <hash 前 8 位>]`），不会按明文保存——但这不等于真加密。另请注意：应用**默认**敏感策略已从「明文标记」改为「脱敏入库」（设置中可改回）。
 
-2. **仅 macOS 可用**。三个核心能力——`changeCount` 轮询 + `enigo` 注入 `⌘V` 回贴、Finder Sync 扩展右键菜单、`CGEventTap` + `NSMenu` 桌面右键、`Option`＋拖动环形盘——都依赖 macOS 私有 API。仓库里虽有 `linux/`、`windows/` 的目录骨架，但**并未实现、也未在非 macOS 上验证**。构建与运行的前提是 macOS + Xcode Command Line Tools。
+2. **仅 macOS 可用**。核心能力——`changeCount` 轮询 + `enigo` 注入 `⌘V` 回贴、Finder Sync 扩展右键菜单、`CGEventTap` + `NSMenu` 桌面右键、`Option`＋拖动环形盘、`core/statusbar/` 原生模块——都依赖 macOS 私有 API。仓库里虽有 `linux/`、`windows/` 的目录骨架，但**并未实现、也未在非 macOS 上验证**。构建与运行的前提是 macOS + Xcode Command Line Tools。
+
+3. **状态栏控制中心默认开启**。它读取系统电量、蓝牙、音量等状态信息；其中「充到满」依赖 PowerUI 私有框架桥，在系统升级或加固运行时环境下可能需要重新授权。若不需要，可在设置中关闭。
 
 ---
 
@@ -99,7 +103,7 @@ macOS 没有剪贴板变更通知 API，唯一可靠的路径是轮询 `NSPasteb
 
 **图片落盘：内容寻址**
 
-剪贴板图片解码成 RGBA8 后编码为 PNG，存到 `~/.clipbase/data/files/clip_<sha256 前 16 字节>.png`。文件名只取决于像素内容，所以同一张图永远同一路径，重复复制直接复用、不重复编码，也让「按 hash 去重」对图片成立。
+剪贴板图片解码成 RGBA8 后编码为 PNG，存到 `~/.halo/data/files/clip_<sha256 前 16 字节>.png`。文件名只取决于像素内容，所以同一张图永远同一路径，重复复制直接复用、不重复编码，也让「按 hash 去重」对图片成立。
 
 **去重与「自己写的回声」**
 
@@ -109,7 +113,7 @@ macOS 没有剪贴板变更通知 API，唯一可靠的路径是轮询 `NSPasteb
 
 **存储与检索**
 
-- SQLite（rusqlite，bundled + FTS5），单文件 `~/.clipbase/data/clipbase.db`。
+- SQLite（rusqlite，bundled + FTS5），单文件 `~/.halo/data/halo.db`。
 - 内容以 JSON 存在 `content` 列，`clips_fts` 通过 `rowid` 关联；查询时每个关键词用双引号包裹再拼接，天然是隐式 AND，也避免了 FTS5 特殊字符注入。
 - 容量策略在每次入库后执行：先按 TTL 删未置顶的过期条目，再按条数裁掉超出部分，最后循环删除最旧的未置顶条目直到总字节数达标。`max_items` / `max_bytes` 为 0 时回落到出厂默认值——否则一次坏的配置写入会把历史清空。
 - 删除图片条目时**故意不删文件**，这样 `⌘Z` 恢复的记录不会指向一个已经不存在的路径；无主 PNG 在启动时统一回收（`prune_orphan_images`）。
@@ -117,7 +121,7 @@ macOS 没有剪贴板变更通知 API，唯一可靠的路径是轮询 `NSPasteb
 
 **回贴**
 
-1. 唤出面板时记录当前前台 App 的 pid（如果前台就是 ClipBase 自己则保留旧值，避免把「上一个真实目标」冲掉）。
+1. 唤出面板时记录当前前台 App 的 pid（如果前台就是 Halo 自己则保留旧值，避免把「上一个真实目标」冲掉）。
 2. 回贴时先把内容写进剪贴板，写入前登记自写指纹。
 3. 激活记录下来的前台 App，等待约 60ms 让它真正拿到焦点。
 4. 用 `enigo` 注入 `⌘V`。修饰键一定会在 `v` 之后松开——否则目标 App 会以为 `⌘` 一直被按着，之后所有快捷键都变成组合键。
@@ -131,7 +135,7 @@ macOS 没有剪贴板变更通知 API，唯一可靠的路径是轮询 `NSPasteb
 - 窗口层级被抬到 25（`NSStatusWindowLevel`），避免同屏装了别的剪贴板工具时被对方压住。
 - 失焦收起带 400ms 宽限，防止「刚显示就被自己的焦点事件收掉」。
 - 面板一出现就异步补一次剪贴板轮询：用户经常「复制完立刻按快捷键」，常规 500ms 轮询可能还没轮到，不补这一下会看到旧列表。
-- 面板是 hide 而不是销毁，所以「出现动画 / 复位滚动 / 清空搜索词」由前端监听 `clipbase://panel-shown` 重放；原生 `focus` 事件作为兜底（webview 未就绪时事件会丢）。
+- 面板是 hide 而不是销毁，所以「出现动画 / 复位滚动 / 清空搜索词」由前端监听 `halo://panel-shown` 重放；原生 `focus` 事件作为兜底（webview 未就绪时事件会丢）。
 
 **入库流水线**（`src-tauri/src/state.rs`）
 
@@ -147,7 +151,7 @@ macOS 没有剪贴板变更通知 API，唯一可靠的路径是轮询 `NSPasteb
 
 ### 2.1 Finder 里的右键菜单（文件 / 文件夹）
 
-装好 Finder 扩展后，右键菜单里会直接出现 ClipBase 的动作，不需要展开「服务」子菜单：
+装好 Finder 扩展后，右键菜单里会直接出现 Halo 的动作，不需要展开「服务」子菜单：
 
 | 菜单项 | 行为 |
 | --- | --- |
@@ -195,9 +199,9 @@ Finder Sync 扩展注入不了桌面，所以桌面由主程序接管，提供�
 Finder Sync 扩展是独立进程，不能直接调用 Rust。所以它做两件事：往右键菜单里放条目、把用户点的动作写成一个 JSON 请求文件。
 
 - 菜单只在「选中项目」和「容器（空白处）」两种上下文里出现。
-- 监视范围是真实主目录、桌面和外接卷（`/Volumes`）；系统目录（如 `/usr`）不会出现 ClipBase 菜单。
+- 监视范围是真实主目录、桌面和外接卷（`/Volumes`）；系统目录（如 `/usr`）不会出现 Halo 菜单。
 - 请求写成 `{action, paths, container, created_at}`，先写临时文件再 `rename`，保证主程序不会读到半个 JSON。
-- 队列目录三级回退：App Group 容器（`group.com.clipbase.app`）→ 扩展自己的容器 → `Application Support/ClipBaseFinder/Requests`。写完再发 `clipbase-finder://wake` 尝试立即唤醒。
+- 队列目录三级回退：App Group 容器（`group.com.halo.desktop`）→ 扩展自己的容器 → `Application Support/HaloFinder/Requests`。写完再发 `halo-finder://wake` 尝试立即唤醒。
 
 **主程序侧：250ms 轮询 + 严格校验**（`src-tauri/src/core/services/bridge.rs`）
 
@@ -215,7 +219,7 @@ Finder Sync 扩展是独立进程，不能直接调用 Rust。所以它做两件
   2. 吞掉这次右键事件（返回 `NULL`，Finder 收不到）。
   3. 回到主线程用 `NSMenu` 的 `popUpMenuPositioningItem` 弹出自己的菜单。
 - 菜单带 SF Symbol 图标，取不到图标时照常显示，只是没有图标。
-- 防自接管：所有事件都打了 `kCGEventSourceUserData = 42`，回调看到这个标记就直接放行；「显示 Finder 菜单」会用另一个魔数（`0x434C495042415345`，ASCII 的 `CLIPBASE`）重新投递一次右键，让 Finder 自己弹原生菜单。
+- 防自接管：所有事件都打了 `kCGEventSourceUserData = 42`，回调看到这个标记就直接放行；「显示 Finder 菜单」会用另一个魔数（`0x434C495042415345`，ASCII 的 `HALO`）重新投递一次右键，让 Finder 自己弹原生菜单。
 - 系统在回调超时或安全输入时会主动禁用 tap，回调收到伪事件类型后必须自己重新启用，否则会「用一阵子就失灵」。
 - 这里同样需要「辅助功能」权限；没授权时桌面右键保持原生行为，Finder 窗口内的右键不受影响。
 
@@ -354,7 +358,7 @@ output      输出目录、重名策略（Rename / Overwrite / Skip）、
 2. **源文件保护优先**：目标路径和源文件是同一个文件时直接拒绝，这一条优先于任何「覆盖」策略——否则「转成 JPG」会把自己的源文件写坏。
 3. 按预设的重名策略决定最终文件名（自动加序号 / 覆盖 / 跳过）。
 4. 在锁内一次性完成「检查 + 占用」，避免两个 worker 同时选中同一个名字。
-5. 先写 `.名字.clipbase-<uuid>.tmp`，全部成功后再 `rename` 到目标名。失败或取消只删临时文件，目标位置永远不会出现半成品。
+5. 先写 `.名字.halo-<uuid>.tmp`，全部成功后再 `rename` 到目标名。失败或取消只删临时文件，目标位置永远不会出现半成品。
 
 **结果反馈**
 
@@ -369,13 +373,13 @@ output      输出目录、重名策略（Rename / Overwrite / Skip）、
 | 回贴（自动 `⌘V`） | 系统设置 → 隐私与安全性 → 辅助功能 | 降级为「仅复制到剪贴板」，并提示原因 |
 | 桌面空白处右键菜单 | 同上 | 桌面保持系统原生右键 |
 | `Option`+拖动唤起环形盘 | 同上 | 圆环不会出现；设置页会显示是「没授权」「监听没起来」还是「起手点不是文件」 |
-| Finder 右键菜单 | 打包后的 `ClipBase.app` + Finder 扩展启用 | 设置页会说明是开发构建还是未启用 |
+| Finder 右键菜单 | 打包后的 `Halo.app` + Finder 扩展启用 | 设置页会说明是开发构建还是未启用 |
 | 环形盘交接通知 | 系统通知权限 | 只在盘内显示结果 |
 
-数据全部在 `~/.clipbase/`：
+数据全部在 `~/.halo/`：
 
 ```
-data/clipbase.db      SQLite 主库（历史、配置、快捷回复、模块清单）
+data/halo.db      SQLite 主库（历史、配置、快捷回复、模块清单）
 data/files/           剪贴板图片（内容寻址 PNG）
 icons/                来源 App 图标缓存
 modules/              已安装模块
@@ -400,7 +404,7 @@ logs/                 运行日志
 
 ## 技术栈
 
-Tauri 2（Rust 后端 + Web 前端）· React 18 + Vite + TypeScript + Zustand + Tailwind · rusqlite（bundled + FTS5）· image / arboard / enigo / objc2 · Finder Sync 扩展用 Swift 编写。
+Tauri 2（Rust 后端 + Web 前端）· React 18 + Vite + TypeScript + Zustand + Tailwind · rusqlite（bundled + FTS5）· image / arboard / enigo / objc2 · Finder Sync 扩展用 Swift 编写。状态栏原生模块（`core/statusbar/`）通过 core-graphics / PowerUI 私有框架读取系统状态。
 
 ## 构建与运行
 
@@ -409,7 +413,7 @@ Tauri 2（Rust 后端 + Web 前端）· React 18 + Vite + TypeScript + Zustand +
 ```bash
 npm install
 npm run tauri dev      # 开发模式
-npm run tauri build    # 打包 ClipBase.app
+npm run tauri build    # 打包 Halo.app
 ```
 
 Finder 右键菜单只能在**打包后的 App** 里验证（`tauri dev` 的裸二进制里没有扩展）。桌面右键由主程序实现，dev 下也能用，但同样需要「辅助功能」权限。
@@ -430,6 +434,7 @@ src-tauri/src/        Rust 后端
   core/services/      Finder 扩展请求桥 + 动作执行
   core/finder/        读 Finder 选中项 + 起手文件（AX 命中）
   core/ring/          环形盘状态机与转换编排
+  core/statusbar/     菜单栏状态中心（电池 / SMC / 蓝牙 / 音量 / 输入法 / 网络 / PowerUI）
   core/convert/       预设 / 路由 / 引擎 / 任务 / 输出
   core/option_tap/    Option+拖动手势
   commands/           Tauri 命令层（参数校验 + 中文错误）
@@ -441,19 +446,25 @@ docs/                 设计文档与实现说明
 
 ## 文档
 
-| 文档 | 说明 |
-| --- | --- |
-| `docs/IMPLEMENTATION.md` | 实际实现、与设计的差异、踩过的坑（先读这份） |
-| `docs/ARCHITECTURE.md` | 系统架构与目录职责 |
-| `docs/PRD.md` | 产品定位与需求池 |
-| `docs/UI-DESIGN.md` | 苹果风格设计规范 |
-| `docs/module-spec.md` | 模块开发规范 |
-| `docs/REA-Filee-Conversion.md` | 格式转换规范（转换实现的依据） |
-| `docs/REA-Filee-Ring-Integrated.md` | 环形转换总规范（Profile / 单手势 / 单面 / 禁用规则） |
-| `docs/REA-Filee-Ring-Wheel.md` | 环形盘交互逆向记录（早期版本，已合并进总规范） |
-| `docs/REA-Filee-Ring-Editor.md` | 环形编辑页逆向记录（早期版本，已合并进总规范） |
-| `docs/REA-iCopy-Filee.md` | iCopy / Filee 逆向分析 |
+> ⚠️ 下列设计文档目前**仅 `docs/UI-REVIEW-2026-10-29.md` 在库**（一次界面审查，覆盖面板 / 设置 / 历史 / 卡片，**非全产品验收**）。其余文档尚待补全；阅读时请以源码为准。
+
+| 文档 | 说明 | 状态 |
+| --- | --- | --- |
+| `docs/UI-REVIEW-2026-10-29.md` | 界面审查（可用性 / 响应式 / 美观度 / 工程落地） | ✅ 在库 |
+| `docs/POSITIONING.md` | 定位卡（目标用户 / 核心楔子 / 差异点 / 当前边界） | ✅ 在库 |
+| `docs/IMPLEMENTATION.md` | 实际实现、与设计的差异、踩过的坑 | ⏳ 待补 |
+| `docs/ARCHITECTURE.md` | 系统架构与目录职责 | ⏳ 待补 |
+| `docs/PRD.md` | 产品定位与需求池 | ⏳ 待补 |
+| `docs/UI-DESIGN.md` | 苹果风格设计规范 | ⏳ 待补 |
+| `docs/module-spec.md` | 模块开发规范 | ⏳ 待补 |
+| `docs/REA-Filee-Conversion.md` | 格式转换规范（转换实现的依据） | ⏳ 待补 |
+| `docs/REA-Filee-Ring-Integrated.md` | 环形转换总规范（Profile / 单手势 / 单面 / 禁用规则） | ⏳ 待补 |
+| `docs/REA-Filee-Ring-Wheel.md` | 环形盘交互逆向记录（早期版本，已合并进总规范） | ⏳ 待补 |
+| `docs/REA-Filee-Ring-Editor.md` | 环形编辑页逆向记录（早期版本，已合并进总规范） | ⏳ 待补 |
+| `docs/REA-iCopy-Filee.md` | iCopy / Filee 逆向分析 | ⏳ 待补 |
 
 ## 许可证
 
-MIT（见 `LICENSE`）。
+主许可证为 MIT（见 `LICENSE`）。
+
+状态栏面板设计、菜单栏图标的几何 / 配色 / 字体常量，以及 `core/statusbar/macos/powerui.rs` 的 PowerUI 私有框架桥，派生自 lingyired 的 **Status Trio**（Apache-2.0，见 `LICENSE-STATUS-TRIO.txt` 与 `NOTICE-STATUS-TRIO.txt`）。按 Apache-2.0 要求，分发时须一并保留这两份文件。

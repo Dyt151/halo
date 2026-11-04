@@ -10,16 +10,19 @@ use crate::core::ring::profile::normalize_extensions;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SensitivityPolicy {
-    /// 默认：识别为敏感内容后照常入库，只打 `sensitive` 标记。
+    /// 脱敏后入库（默认）。
     ///
-    /// 旧默认 `Ignore` 会静默丢条目（复制一句「把 token 放进 header」就消失），
-    /// 且启发式规则有误报，静默丢弃的代价大于标记。
+    /// 兼顾两条底线：① 不静默丢弃 —— 启发式规则有误报，旧 `Ignore` 默认会把
+    /// 命中条目悄悄丢掉（复制一句「把 token 放进 header」就没了），代价大于标记，
+    /// 脱敏至少保留「这里有敏感内容」的占位；② 不明文落盘 —— 命中的密码 / token
+    /// 写成 `[敏感内容已脱敏 <hash 前 8 位>]`，同用户进程、Time Machine、备份都读不到原文。
+    /// 需要明文时由用户在设置里显式切回 [`Self::Flag`]。
     #[default]
+    Mask,
+    /// 识别为敏感内容后照常入库，只打 `sensitive` 标记（明文留存，仅作提示）。
     Flag,
     /// 识别为敏感内容后不入库。
     Ignore,
-    /// 脱敏后入库。
-    Mask,
     /// 加密后入库（应用层 AEAD）。
     ///
     /// **尚未实现**：本地字段级加密需要 Keychain 主密钥（见 `docs/IMPLEMENTATION.md` §4.1）。
@@ -71,7 +74,7 @@ pub struct SyncConfig {
 }
 
 fn default_sync_file() -> String {
-    "clipbase-sync.json".to_string()
+    "halo-sync.json".to_string()
 }
 
 fn default_sync_interval() -> u64 {
@@ -266,7 +269,10 @@ impl RingProfile {
 /// 出厂盘正面内容（id → 预设列表）。
 fn stock_content(id: &str) -> Vec<String> {
     match id {
-        "images" => preset::DEFAULT_IMAGES.iter().map(|s| s.to_string()).collect(),
+        "images" => preset::DEFAULT_IMAGES
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         "text" => preset::DEFAULT_TEXT.iter().map(|s| s.to_string()).collect(),
         "docs" => preset::DEFAULT_DOCS.iter().map(|s| s.to_string()).collect(),
         "mixed" => preset::default_mixed_actions(),
@@ -383,10 +389,18 @@ pub struct RingConfig {
     #[serde(default, rename = "actions", skip_serializing_if = "Option::is_none")]
     pub legacy_actions: Option<Vec<String>>,
     /// 【已废弃】旧版背面顺序，仅用于迁移到 `profiles`（背面本身已取消）。
-    #[serde(default, rename = "back_actions", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "back_actions",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub legacy_back_actions: Option<Vec<String>>,
     /// 【已废弃】旧版全局 JPG 质量，仅用于迁移到预设（`Config::migrate` 会清空）。
-    #[serde(default, rename = "jpeg_quality", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "jpeg_quality",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub legacy_jpeg_quality: Option<u8>,
     /// 【已废弃】旧版全局输出目录，仅用于迁移到预设（`Config::migrate` 会清空）。
     #[serde(default, rename = "dest_dir", skip_serializing_if = "Option::is_none")]
@@ -426,6 +440,181 @@ impl Default for RingConfig {
             legacy_back_actions: None,
             legacy_jpeg_quality: None,
             legacy_dest_dir: None,
+        }
+    }
+}
+
+/// 状态栏（菜单栏图标 + 下拉面板）配置。
+///
+/// `sections` 是**可见模块的顺序表**：面板按这个顺序渲染，设置页拖拽即改顺序。
+/// 只有第一批（公开 API 能覆盖）的模块会真正出现在面板里；网络 / 蓝牙 / VPN
+/// 与私有能力在设置页标「即将支持」，即使写进这里也不会渲染。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StatusBarConfig {
+    /// 是否显示菜单栏图标（关闭后托盘图标隐藏，快捷键与主窗口不受影响）。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 面板显示哪些模块、按什么顺序。
+    #[serde(default = "default_statusbar_sections")]
+    pub sections: Vec<String>,
+    /// 面板里滚轮直接调音量（status-trio 同款交互）。
+    #[serde(default = "default_true")]
+    pub scroll_adjusts_volume: bool,
+    /// 滚轮调节的方向：`output` / `input`。
+    #[serde(default = "default_scroll_scope")]
+    pub scroll_scope: String,
+    /// 滚轮方向反转（自然滚动手感）。
+    #[serde(default)]
+    pub scroll_natural: bool,
+    /// 菜单栏图标中心图形：`auto` / `wifi` / `bluetooth` / `clipboard`。
+    #[serde(default = "default_glyph_center")]
+    pub glyph_center: String,
+    /// 外环画电量（没有电池的机器自动不画）。
+    #[serde(default = "default_true")]
+    pub glyph_battery_ring: bool,
+    /// 环顶缺口里写电量数字。
+    #[serde(default = "default_true")]
+    pub glyph_battery_percent: bool,
+    /// 底部画输出音量（四个点或一段圆弧条，见 `glyph_volume_style`）。
+    ///
+    /// 旧配置里的 `glyph_volume_dots` 是同一个开关，那时只有点这一种画法。
+    #[serde(default = "default_true", alias = "glyph_volume_dots")]
+    pub glyph_volume: bool,
+    /// 音量区的画法：`arc`（圆弧条）/ `dots`（四个点）。
+    #[serde(default = "default_glyph_volume_style")]
+    pub glyph_volume_style: String,
+    /// 有线连接改用普通 Wi-Fi 图标（关掉则画正版的双折线触点）。
+    #[serde(default)]
+    pub glyph_wifi_for_ethernet: bool,
+    /// iPhone 个人热点改用普通 Wi-Fi 图标。
+    #[serde(default)]
+    pub glyph_wifi_for_hotspot: bool,
+    /// 临时网络改用普通 Wi-Fi 图标。
+    #[serde(default)]
+    pub glyph_wifi_for_temporary: bool,
+    /// 互联网共享改用普通 Wi-Fi 图标。
+    #[serde(default)]
+    pub glyph_wifi_for_sharing: bool,
+    /// 彩色图标（电量弧上色）；关闭则交给系统按菜单栏明暗反色。
+    #[serde(default = "default_true")]
+    pub glyph_colored: bool,
+    /// 彩色图标的墨色取向：`auto` / `light` / `dark`。
+    #[serde(default = "default_glyph_appearance")]
+    pub glyph_appearance: String,
+}
+
+/// 图标中心可选值（设置页与 normalize 共用一份）。
+pub const GLYPH_CENTERS: [&str; 4] = ["auto", "wifi", "bluetooth", "clipboard"];
+
+/// 彩色图标可选的明暗取向。
+pub const GLYPH_APPEARANCES: [&str; 3] = ["auto", "light", "dark"];
+
+/// 音量区画法可选值。
+pub const GLYPH_VOLUME_STYLES: [&str; 2] = ["arc", "dots"];
+
+fn default_glyph_center() -> String {
+    "auto".to_string()
+}
+
+fn default_glyph_appearance() -> String {
+    "auto".to_string()
+}
+
+fn default_glyph_volume_style() -> String {
+    "arc".to_string()
+}
+
+/// 面板模块 id（顺序表与设置页共用）。
+pub const STATUSBAR_SECTIONS: [&str; 7] = [
+    "battery",
+    "volume",
+    "audio_input",
+    "input_source",
+    "network",
+    "vpn",
+    "bluetooth",
+];
+
+/// 真正能渲染的模块：VPN 仍留到后续版本。
+pub const STATUSBAR_AVAILABLE_SECTIONS: [&str; 6] = [
+    "battery",
+    "network",
+    "bluetooth",
+    "volume",
+    "audio_input",
+    "input_source",
+];
+
+fn default_statusbar_sections() -> Vec<String> {
+    STATUSBAR_AVAILABLE_SECTIONS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn default_scroll_scope() -> String {
+    "output".to_string()
+}
+
+impl Default for StatusBarConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sections: default_statusbar_sections(),
+            scroll_adjusts_volume: true,
+            scroll_scope: default_scroll_scope(),
+            scroll_natural: false,
+            glyph_center: default_glyph_center(),
+            glyph_battery_ring: true,
+            glyph_battery_percent: true,
+            glyph_volume: true,
+            glyph_volume_style: default_glyph_volume_style(),
+            glyph_wifi_for_ethernet: false,
+            glyph_wifi_for_hotspot: false,
+            glyph_wifi_for_temporary: false,
+            glyph_wifi_for_sharing: false,
+            glyph_colored: true,
+            glyph_appearance: default_glyph_appearance(),
+        }
+    }
+}
+
+impl StatusBarConfig {
+    /// 去掉未知/重复的模块 id，并把滚轮方向、图标中心修成合法值（可重复调用）。
+    pub fn normalize(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        self.sections
+            .retain(|id| STATUSBAR_SECTIONS.contains(&id.as_str()) && seen.insert(id.clone()));
+        if !matches!(self.scroll_scope.as_str(), "output" | "input") {
+            self.scroll_scope = default_scroll_scope();
+        }
+        if !GLYPH_CENTERS.contains(&self.glyph_center.as_str()) {
+            self.glyph_center = default_glyph_center();
+        }
+        if !GLYPH_APPEARANCES.contains(&self.glyph_appearance.as_str()) {
+            self.glyph_appearance = default_glyph_appearance();
+        }
+        if !GLYPH_VOLUME_STYLES.contains(&self.glyph_volume_style.as_str()) {
+            self.glyph_volume_style = default_glyph_volume_style();
+        }
+    }
+
+    /// 图标内容的绘制参数。
+    pub fn glyph_options(&self) -> crate::core::statusbar::glyph::GlyphOptions {
+        crate::core::statusbar::glyph::GlyphOptions {
+            center: crate::core::statusbar::glyph::CenterMode::parse(&self.glyph_center),
+            battery_ring: self.glyph_battery_ring,
+            volume: self.glyph_volume,
+            volume_style: crate::core::statusbar::glyph::VolumeStyle::parse(
+                &self.glyph_volume_style,
+            ),
+            battery_percent: self.glyph_battery_percent,
+            wifi_for_ethernet: self.glyph_wifi_for_ethernet,
+            wifi_for_hotspot: self.glyph_wifi_for_hotspot,
+            wifi_for_temporary: self.glyph_wifi_for_temporary,
+            wifi_for_sharing: self.glyph_wifi_for_sharing,
+            colored: self.glyph_colored,
+            appearance: crate::core::statusbar::glyph::Appearance::parse(&self.glyph_appearance),
         }
     }
 }
@@ -518,6 +707,9 @@ pub struct Config {
     /// 转换预设库（环形动作引用的配方都在这里）。
     #[serde(default)]
     pub conversion: ConversionConfig,
+    /// 状态栏图标与下拉面板。
+    #[serde(default)]
+    pub statusbar: StatusBarConfig,
     /// 上次停留的设置分区（任务 1：主窗口默认打开上次分区）。
     #[serde(default = "default_settings_section")]
     pub last_settings_section: String,
@@ -571,7 +763,7 @@ impl Default for Config {
             max_bytes: default_max_bytes(),
             monitor_enabled: true,
             poll_interval_ms: default_poll_interval(),
-            sensitivity: SensitivityPolicy::Flag,
+            sensitivity: SensitivityPolicy::Mask,
             hotkeys: HotkeyConfig::default(),
             sync: SyncConfig::default(),
             launch_at_login: false,
@@ -592,6 +784,7 @@ impl Default for Config {
             app_blacklist: Vec::new(),
             ring: RingConfig::default(),
             conversion: ConversionConfig::with_builtins(),
+            statusbar: StatusBarConfig::default(),
             last_settings_section: default_settings_section(),
         }
     }
@@ -713,12 +906,8 @@ impl Config {
 
         // 恰好是出厂三盘（没有自建盘）→ 补「文档」盘：新盘没有旧数据可保留，
         // 直接按默认内容建。位置放在混合兜底之前，保证匹配优先级正确。
-        let ids: std::collections::HashSet<&str> = self
-            .ring
-            .profiles
-            .iter()
-            .map(|p| p.id.as_str())
-            .collect();
+        let ids: std::collections::HashSet<&str> =
+            self.ring.profiles.iter().map(|p| p.id.as_str()).collect();
         if ids.len() == 3 && ids.contains("images") && ids.contains("text") && ids.contains("mixed")
         {
             let docs = RingProfile {
@@ -763,6 +952,8 @@ impl Config {
         self.ring.last_action = last;
 
         self.conversion.presets = presets;
+
+        self.statusbar.normalize();
     }
 }
 
@@ -773,13 +964,7 @@ const LEGACY_DEFAULT_BACK: [&str; 4] = ["img.gif", "img.bmp", "img.tiff", "doc.m
 /// 上一版（带背面的版本）出厂布局：正 / 背面都恰好没动过时，升级到新正面默认。
 const PREV_DEFAULT_FRONT: [&str; 5] = ["img.jpg", "img.png", "doc.md", "doc.html", "doc.txt"];
 const PREV_DEFAULT_BACK: [&str; 7] = [
-    "img.webp",
-    "img.gif",
-    "img.bmp",
-    "img.tiff",
-    "img.heic",
-    "img.avif",
-    "img.ico",
+    "img.webp", "img.gif", "img.bmp", "img.tiff", "img.heic", "img.avif", "img.ico",
 ];
 
 /// 旧配置没有 `back_actions` 字段时按上一版默认背面处理（保持旧行为：
@@ -801,22 +986,13 @@ fn kept(ids: &[&str]) -> Vec<String> {
 const PREV_IMAGES_FRONT: [&str; 2] = ["img.jpg", "img.png"];
 const PREV_TEXT_FRONT: [&str; 3] = ["doc.md", "doc.html", "doc.txt"];
 const PREV_MIXED_FRONT: [&str; 12] = [
-    "img.jpg",
-    "img.png",
-    "doc.md",
-    "doc.html",
-    "doc.txt",
-    "img.webp",
-    "img.gif",
-    "img.bmp",
-    "img.tiff",
-    "img.heic",
-    "img.avif",
-    "img.ico",
+    "img.jpg", "img.png", "doc.md", "doc.html", "doc.txt", "img.webp", "img.gif", "img.bmp",
+    "img.tiff", "img.heic", "img.avif", "img.ico",
 ];
 /// 更早一版（合并单面）的图片盘正面。
-const LEGACY_MERGED_IMAGES: [&str; 6] =
-    ["img.jpg", "img.png", "img.webp", "img.gif", "img.bmp", "img.tiff"];
+const LEGACY_MERGED_IMAGES: [&str; 6] = [
+    "img.jpg", "img.png", "img.webp", "img.gif", "img.bmp", "img.tiff",
+];
 
 /// 出厂盘是否「从没被用户动过」（正面 / 背面恰等于上一版默认内容）。
 ///
@@ -908,10 +1084,7 @@ fn normalize_profiles(profiles: &mut Vec<RingProfile>, presets: &mut Vec<Convers
     }
 
     // 至少留一个混合兜底：否则没配置过的文件类型根本没有盘可拖（§2.2）。
-    if !out
-        .iter()
-        .any(|p| p.kind == RingProfileKind::MixedFallback)
-    {
+    if !out.iter().any(|p| p.kind == RingProfileKind::MixedFallback) {
         let id = unique_profile_id(&out, "mixed");
         out.push(RingProfile {
             id,
@@ -961,12 +1134,117 @@ mod tests {
         items.iter().map(|s| s.to_string()).collect()
     }
 
+    /// 状态栏模块顺序：未知/重复 id 清掉，滚轮方向非法时回落输出。
+    #[test]
+    fn statusbar_normalize_filters_unknown_and_duplicates() {
+        let mut sb = StatusBarConfig {
+            sections: list(&["volume", "ghost", "battery", "volume", "network"]),
+            scroll_scope: "mic".to_string(),
+            ..StatusBarConfig::default()
+        };
+        sb.normalize();
+        assert_eq!(sb.sections, list(&["volume", "battery", "network"]));
+        assert_eq!(sb.scroll_scope, "output");
+    }
+
+    /// 旧配置没有 `statusbar` 字段时用默认值（图标开、六个已实现模块）。
+    #[test]
+    fn statusbar_defaults_when_field_missing() {
+        let config: Config = serde_json::from_str("{}").expect("空配置可解析");
+        assert!(config.statusbar.enabled);
+        assert_eq!(
+            config.statusbar.sections,
+            list(&[
+                "battery",
+                "network",
+                "bluetooth",
+                "volume",
+                "audio_input",
+                "input_source"
+            ])
+        );
+        assert!(config.statusbar.scroll_adjusts_volume);
+        assert_eq!(config.statusbar.glyph_center, "auto");
+        assert!(config.statusbar.glyph_battery_ring);
+        assert!(config.statusbar.glyph_battery_percent);
+        assert!(config.statusbar.glyph_volume);
+        assert_eq!(config.statusbar.glyph_volume_style, "arc");
+        assert!(config.statusbar.glyph_colored);
+        assert_eq!(config.statusbar.glyph_appearance, "auto");
+        // 专用标记才是正版的默认长相，四个退回开关默认全关。
+        assert!(!config.statusbar.glyph_wifi_for_hotspot);
+        assert!(!config.statusbar.glyph_wifi_for_ethernet);
+        assert_eq!(
+            config.statusbar.glyph_options().center,
+            crate::core::statusbar::glyph::CenterMode::Auto
+        );
+    }
+
+    /// 旧配置里只有 `glyph_volume_dots`：那个开关管的是「画不画音量区」，
+    /// 当时画法只有点一种，所以照样映射到新的 `glyph_volume`。
+    #[test]
+    fn statusbar_accepts_the_legacy_volume_dots_key() {
+        let config: Config = serde_json::from_str(r#"{"statusbar":{"glyph_volume_dots":false}}"#)
+            .expect("旧字段可解析");
+        assert!(!config.statusbar.glyph_volume);
+        assert!(!config.statusbar.glyph_options().volume);
+    }
+
+    #[test]
+    fn statusbar_normalize_fixes_unknown_glyph_center() {
+        let mut config = StatusBarConfig {
+            glyph_center: "vpn".to_string(),
+            glyph_appearance: "midnight".to_string(),
+            glyph_volume_style: "waves".to_string(),
+            ..StatusBarConfig::default()
+        };
+        config.normalize();
+        assert_eq!(config.glyph_center, "auto");
+        assert_eq!(config.glyph_appearance, "auto");
+        assert_eq!(config.glyph_volume_style, "arc");
+
+        let mut config = StatusBarConfig {
+            glyph_center: "bluetooth".to_string(),
+            glyph_battery_ring: false,
+            glyph_battery_percent: false,
+            glyph_volume: false,
+            glyph_volume_style: "dots".to_string(),
+            glyph_wifi_for_hotspot: true,
+            glyph_colored: false,
+            glyph_appearance: "dark".to_string(),
+            ..StatusBarConfig::default()
+        };
+        config.normalize();
+        let options = config.glyph_options();
+        assert_eq!(
+            options.center,
+            crate::core::statusbar::glyph::CenterMode::Bluetooth
+        );
+        assert!(!options.battery_ring);
+        assert!(!options.battery_percent);
+        assert!(!options.volume);
+        assert_eq!(
+            options.volume_style,
+            crate::core::statusbar::glyph::VolumeStyle::Dots
+        );
+        assert!(options.wifi_for_hotspot);
+        assert!(!options.wifi_for_sharing);
+        assert!(!options.colored);
+        assert_eq!(
+            options.appearance,
+            crate::core::statusbar::glyph::Appearance::Dark
+        );
+    }
+
     /// 出厂盘共同断言：图片 6 / 文本 2 / 文档 6 / 兜底，全部没有背面。
     fn assert_stock_profiles(config: &Config) {
         let images = profile_by_id(config, "images").expect("图片 Profile");
         assert_eq!(
             images.preset_ids,
-            preset::DEFAULT_IMAGES.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            preset::DEFAULT_IMAGES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
         );
         assert!(images.back_ids.is_empty());
         assert!(images.preset_ids.len() <= MAX_PROFILE_SLICES);
@@ -974,14 +1252,20 @@ mod tests {
         let text = profile_by_id(config, "text").expect("文本 Profile");
         assert_eq!(
             text.preset_ids,
-            preset::DEFAULT_TEXT.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            preset::DEFAULT_TEXT
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
         );
         assert!(text.back_ids.is_empty());
 
         let docs = profile_by_id(config, "docs").expect("文档 Profile");
         assert_eq!(
             docs.preset_ids,
-            preset::DEFAULT_DOCS.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            preset::DEFAULT_DOCS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
         );
         assert_eq!(docs.extensions, docs_extensions());
         assert!(docs.back_ids.is_empty());
@@ -991,7 +1275,10 @@ mod tests {
         assert_eq!(mixed.preset_ids, preset::default_mixed_actions());
         assert!(mixed.back_ids.is_empty());
         // 兜底必须排在最后（匹配优先级）。
-        assert_eq!(config.ring.profiles.last().map(|p| p.id.as_str()), Some("mixed"));
+        assert_eq!(
+            config.ring.profiles.last().map(|p| p.id.as_str()),
+            Some("mixed")
+        );
     }
 
     /// 旧版配置（格式名动作 + 全局质量/目录）能完整升级到 Profile 模型。
@@ -1261,7 +1548,10 @@ mod tests {
         let images = profile_by_id(&config, "images").expect("图片 Profile");
         assert_eq!(
             images.preset_ids,
-            preset::DEFAULT_IMAGES.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            preset::DEFAULT_IMAGES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
         );
         assert!(images.back_ids.is_empty());
 
@@ -1274,9 +1564,15 @@ mod tests {
         let docs = profile_by_id(&config, "docs").expect("文档 Profile");
         assert_eq!(
             docs.preset_ids,
-            preset::DEFAULT_DOCS.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            preset::DEFAULT_DOCS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
         );
-        assert_eq!(config.ring.profiles.last().map(|p| p.id.as_str()), Some("mixed"));
+        assert_eq!(
+            config.ring.profiles.last().map(|p| p.id.as_str()),
+            Some("mixed")
+        );
 
         // 幂等：再跑一次不重复升级、不重复补盘。
         let once = serde_json::to_value(&config).expect("序列化");
@@ -1284,7 +1580,10 @@ mod tests {
         let twice = serde_json::to_value(&config).expect("序列化");
         assert_eq!(once, twice);
         assert_eq!(
-            profile_by_id(&config, "docs").expect("文档 Profile").preset_ids.len(),
+            profile_by_id(&config, "docs")
+                .expect("文档 Profile")
+                .preset_ids
+                .len(),
             preset::DEFAULT_DOCS.len()
         );
     }

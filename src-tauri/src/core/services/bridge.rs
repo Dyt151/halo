@@ -1,7 +1,7 @@
 //! Finder Sync 扩展 → 主程序的请求桥。
 //!
 //! 扩展是沙盒进程，不能写用户目录；它把一次右键动作写成 JSON 放进自己的
-//! 容器（有 App Group 时放 Group Container），再用 `clipbase-finder://wake`
+//! 容器（有 App Group 时放 Group Container），再用 `halo-finder://wake`
 //! 唤醒主程序。主程序每 250ms 扫一遍候选目录，取走请求并执行。
 //!
 //! 为什么不用 NSServices：NSServices 只能出现在「服务」子菜单，桌面空白处
@@ -22,11 +22,11 @@ use tauri::AppHandle;
 use super::{FinderIntegrationStatus, ServiceAction, EXTENSION_BUNDLE_ID};
 
 /// 扩展的 App Group（正式签名时扩展会优先写这里）。
-const APP_GROUP_ID: &str = "group.com.clipbase.app";
+const APP_GROUP_ID: &str = "group.com.halo.desktop";
 /// 扩展自己的容器 / 非沙盒回退目录里的队列子路径。
-const QUEUE_SUBDIR: &str = "ClipBaseFinder/Requests";
+const QUEUE_SUBDIR: &str = "HaloFinder/Requests";
 /// 扩展的 .appex 名称。
-const APPEX_NAME: &str = "ClipBaseFinderExtension.appex";
+const APPEX_NAME: &str = "HaloFinderExtension.appex";
 /// 菜单动作与执行之间通常只隔几百毫秒；太旧的请求不执行，避免 App 长时间
 /// 未运行时开机后突然建出一堆文件。
 const MAX_REQUEST_AGE_MS: u64 = 10 * 60 * 1000;
@@ -51,7 +51,7 @@ struct ExtensionRequest {
 pub fn start(_app: AppHandle) {
     // 注册与「桌面右键接管」都放后台：`pluginkit -a` 是异步落库的，立刻读
     // `pluginkit -m -i` 会拿到「未安装」，于是桌面菜单按「未启用」初始化，
-    // 用户看到的现象就是「右键菜单没 ClipBase 项了」。这里轮询到条目真的
+    // 用户看到的现象就是「右键菜单没 Halo 项了」。这里轮询到条目真的
     // 出现为止，再按真实状态启停桌面菜单。
     std::thread::Builder::new()
         .name("finder-extension-boot".into())
@@ -89,7 +89,7 @@ pub fn set_enabled(enabled: bool) -> Result<FinderIntegrationStatus, String> {
     if enabled {
         register_if_needed()?;
         // 桌面接管依赖「辅助功能」。这是用户主动点「启用扩展」的时机，
-        // 系统会顺手把 ClipBase 加进列表并弹窗，勾选后监听线程 3 秒内自愈。
+        // 系统会顺手把 Halo 加进列表并弹窗，勾选后监听线程 3 秒内自愈。
         if !crate::core::paste::has_accessibility_permission() {
             crate::core::paste::request_accessibility_permission();
         }
@@ -159,11 +159,21 @@ fn resync_registration() -> bool {
         return false;
     };
     let marker = crate::storage::data_dir().join("finder-extension.fingerprint");
-    if fs::read_to_string(&marker).ok().as_deref() == Some(fingerprint.as_str()) {
+    // 标记内容形如 `<bundle id>|<大小>-<修改时间>`：带上 bundle id 是为了
+    // 改名后不被旧记录挡住；旧版只写指纹，自然不等于新格式。
+    let marker_text = fs::read_to_string(&marker).ok().unwrap_or_default();
+    if marker_text == format!("{EXTENSION_BUNDLE_ID}|{fingerprint}") {
         return false;
     }
 
     // 用户可能主动关过扩展；重新注册后要把这个选择还原。
+    //
+    // 但只在「同一个插件包」上还原：改名/换 bundle id 后 pluginkit 里那条新记录
+    // 天然是未启用状态，照搬过来会把刚注册的扩展直接置成忽略。
+    let same_plugin = marker_text
+        .split_once('|')
+        .map(|(id, _)| id == EXTENSION_BUNDLE_ID)
+        .unwrap_or(false);
     let (was_installed, was_enabled) = pluginkit_state();
     let _ = Command::new(PLUGINKIT).arg("-r").arg(&appex).status();
 
@@ -180,7 +190,7 @@ fn resync_registration() -> bool {
         }
     }
 
-    let election = if was_installed && !was_enabled {
+    let election = if same_plugin && was_installed && !was_enabled {
         "ignore"
     } else {
         "use"
@@ -195,7 +205,7 @@ fn resync_registration() -> bool {
     if let Some(dir) = marker.parent() {
         let _ = fs::create_dir_all(dir);
     }
-    let _ = fs::write(&marker, &fingerprint);
+    let _ = fs::write(&marker, format!("{EXTENSION_BUNDLE_ID}|{fingerprint}"));
     tracing::info!(election, "Finder 扩展已重新注册（清理重建留下的重复记录）");
     true
 }
@@ -252,7 +262,7 @@ fn register_if_needed() -> Result<(), String> {
 
 /// 读 `pluginkit -m -i <bundle>`：是否已安装、是否启用。
 ///
-/// 输出形如 `+    com.clipbase.app.FinderExtension(0.1.0)`；行首 `+` 表示
+/// 输出形如 `+    com.halo.desktop.FinderExtension(0.1.0)`；行首 `+` 表示
 /// 启用，`-` 表示被忽略，空格表示默认状态（视为未启用）。
 fn pluginkit_state() -> (bool, bool) {
     let output = Command::new(PLUGINKIT)
@@ -276,7 +286,7 @@ fn pluginkit_state() -> (bool, bool) {
     }
 }
 
-/// `ClipBase.app/Contents/PlugIns/ClipBaseFinderExtension.appex`。
+/// `Halo.app/Contents/PlugIns/HaloFinderExtension.appex`。
 fn appex_path() -> Option<PathBuf> {
     Some(
         app_bundle_path()?
@@ -285,9 +295,9 @@ fn appex_path() -> Option<PathBuf> {
     )
 }
 
-/// `ClipBase.app`。
+/// `Halo.app`。
 fn app_bundle_path() -> Option<PathBuf> {
-    // .../ClipBase.app/Contents/MacOS/clipbase → Contents → ClipBase.app
+    // .../Halo.app/Contents/MacOS/halo → Contents → Halo.app
     let exe = std::env::current_exe().ok()?;
     let contents = exe.parent()?.parent()?;
     contents.parent().map(Path::to_path_buf)
@@ -342,7 +352,7 @@ fn process_file(path: &Path) {
 
     if let Err(err) = handle_request(request) {
         tracing::warn!("Finder 动作执行失败: {err}");
-        super::notify("ClipBase", &format!("Finder 动作失败：{err}"));
+        super::notify("Halo", &format!("Finder 动作失败：{err}"));
     }
 
     if let Err(err) = fs::remove_file(path) {
@@ -375,8 +385,10 @@ fn handle_request(request: ExtensionRequest) -> Result<(), String> {
 }
 
 fn is_stale(created_at_ms: u64) -> bool {
+    // `created_at == 0` 是异常 / 伪造值（扩展应当写入真实时间戳），直接视为过期丢弃，
+    // 不能当作「永不失效」——否则同用户进程可投递 `created_at:0` 的请求触发建文件 / 开终端。
     if created_at_ms == 0 {
-        return false;
+        return true;
     }
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -424,17 +436,17 @@ mod tests {
         assert_eq!(dirs.len(), 3);
         assert_eq!(
             dirs[0],
-            Path::new("/Users/demo/Library/Group Containers/group.com.clipbase.app/FinderRequests")
+            Path::new("/Users/demo/Library/Group Containers/group.com.halo.desktop/FinderRequests")
         );
         assert_eq!(
             dirs[1],
             Path::new(
-                "/Users/demo/Library/Containers/com.clipbase.app.FinderExtension/Data/Library/Application Support/ClipBaseFinder/Requests"
+                "/Users/demo/Library/Containers/com.halo.desktop.FinderExtension/Data/Library/Application Support/HaloFinder/Requests"
             )
         );
         assert_eq!(
             dirs[2],
-            Path::new("/Users/demo/Library/Application Support/ClipBaseFinder/Requests")
+            Path::new("/Users/demo/Library/Application Support/HaloFinder/Requests")
         );
     }
 
@@ -463,8 +475,8 @@ mod tests {
     }
 
     #[test]
-    fn stale_requests_expire_but_zero_timestamp_is_allowed() {
-        assert!(!is_stale(0));
+    fn stale_requests_expire_and_zero_timestamp_is_stale() {
+        assert!(is_stale(0));
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")

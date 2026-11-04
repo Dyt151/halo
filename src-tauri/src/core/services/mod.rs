@@ -20,9 +20,9 @@ mod macos;
 const UNTITLED_BASE: &str = "未命名";
 
 /// Finder 扩展的 bundle id，与 `finder-extension/Info.plist` 保持一致。
-pub const EXTENSION_BUNDLE_ID: &str = "com.clipbase.app.FinderExtension";
+pub const EXTENSION_BUNDLE_ID: &str = "com.halo.desktop.FinderExtension";
 
-/// ClipBase 在 Finder 右键菜单里的 3 个动作。
+/// Halo 在 Finder 右键菜单里的 3 个动作。
 ///
 /// `message()` 是扩展写入请求 JSON 的稳定协议值，不能随意改动。
 ///
@@ -89,7 +89,7 @@ impl ServiceAction {
 pub struct FinderIntegrationStatus {
     /// 当前平台是否支持 Finder Sync（仅 macOS）。
     pub supported: bool,
-    /// 系统扩展数据库里是否已有 ClipBase Finder 扩展。
+    /// 系统扩展数据库里是否已有 Halo Finder 扩展。
     pub installed: bool,
     /// 扩展当前是否启用。macOS 15 起系统设置不再提供 Finder 扩展开关，
     /// 需要用 `pluginkit -e use` 启用，因此这里直接读真实状态。
@@ -211,11 +211,21 @@ pub fn applescript_string_literal(value: &str) -> String {
     format!("\"{}\"", escape_applescript_string(value))
 }
 
+/// 转义为安全的单引号 shell 片段：用单引号包裹，内部 `'` 转成 `'\''`。
+///
+/// `cd` 经 AppleScript `do script` 交给 Terminal 执行时是 shell 命令，目录里的
+/// `'`、`$()`、`;` 等会在 shell 层被解释。单引号包裹可让目录整体成为字面量，
+/// 即便目录名本身含单引号（用 `'\''` 闭合重开）也不会破坏。
+fn escape_shell_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// 生成「在 Terminal 中进入目录」的 AppleScript（`cd` 到目标目录）。
 pub fn terminal_cd_script(directory: &Path) -> String {
+    let cd = escape_shell_single_quoted(&directory.to_string_lossy());
     format!(
         "tell application \"Terminal\" to do script \"cd {}\"",
-        escape_applescript_string(&directory.to_string_lossy())
+        escape_applescript_string(&cd)
     )
 }
 
@@ -249,7 +259,7 @@ mod tests {
 
     fn scratch_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "clipbase-services-{}-{name}",
+            "halo-services-{}-{name}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
@@ -316,12 +326,22 @@ mod tests {
         let script = terminal_cd_script(Path::new("/tmp/My \"Docs\""));
         assert_eq!(
             script,
-            "tell application \"Terminal\" to do script \"cd /tmp/My \\\"Docs\\\"\""
+            "tell application \"Terminal\" to do script \"cd '/tmp/My \\\"Docs\\\"'\""
         );
         let plain = terminal_cd_script(Path::new("/Users/demo/Desktop"));
         assert_eq!(
             plain,
-            "tell application \"Terminal\" to do script \"cd /Users/demo/Desktop\""
+            "tell application \"Terminal\" to do script \"cd '/Users/demo/Desktop'\""
+        );
+    }
+
+    #[test]
+    fn terminal_cd_script_blocks_shell_injection() {
+        // 目录名里的单引号与命令替换必须被单引号整体包裹成字面量，shell 不会执行。
+        let script = terminal_cd_script(Path::new("/tmp/it's $(whoami); rm -rf ~"));
+        assert_eq!(
+            script,
+            "tell application \"Terminal\" to do script \"cd '/tmp/it'\\\\''s $(whoami); rm -rf ~'\""
         );
     }
 

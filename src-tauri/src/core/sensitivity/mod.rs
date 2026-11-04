@@ -114,8 +114,9 @@ impl Default for SensitivityDetector {
 /// 走这里。迁移入口曾自己写 `sensitive: false` 然后直接插入，于是 iCopy 里的
 /// 密码会绕过脱敏明文入库，还会因为「非敏感」而被同步到云端。
 ///
-/// `None` 表示按策略丢弃（`Ignore`）。`Flag`（默认）原样入库只打标记：
-/// 启发式规则有误报，静默丢条的代价大于多一个 `sensitive` 标记。
+/// `None` 表示按策略丢弃（`Ignore`）。`Mask`（默认）把敏感内容脱敏后入库：
+/// 启发式规则有误报，静默丢条的代价大于多一个 `sensitive` 标记，而明文落盘的
+/// 代价又比两者都大。`Flag` 保留原样入库（仅打标记），需用户显式选择。
 pub fn apply(
     detector: &SensitivityDetector,
     policy: SensitivityPolicy,

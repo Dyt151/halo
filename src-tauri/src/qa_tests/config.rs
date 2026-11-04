@@ -12,11 +12,13 @@ fn defaults_on_empty_db() {
     assert_eq!(c.max_bytes, 1024 * 1024 * 1024);
     assert!(c.monitor_enabled);
     assert_eq!(c.poll_interval_ms, 500);
-    assert_eq!(c.sensitivity, SensitivityPolicy::Flag);
+    // 默认敏感策略为「脱敏入库」：命中的密码 / token 不以明文落盘，
+    // 又不会像 Ignore 那样静默丢条目。
+    assert_eq!(c.sensitivity, SensitivityPolicy::Mask);
     assert_eq!(c.hotkeys.toggle, "Control+Option+C");
     assert_eq!(c.hotkeys.stack_paste, "Control+Shift+V");
     assert!(!c.sync.enabled);
-    assert_eq!(c.sync.remote_file, "clipbase-sync.json");
+    assert_eq!(c.sync.remote_file, "halo-sync.json");
     assert_eq!(c.sync.interval_secs, 300);
     assert!(!c.launch_at_login);
     assert_eq!(c.theme, "system");
