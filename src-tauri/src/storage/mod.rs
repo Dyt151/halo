@@ -126,11 +126,18 @@ pub fn logs_dir() -> PathBuf {
     data_dir().join("logs")
 }
 
-/// 确保应用数据目录结构存在。
+/// 确保应用数据目录结构存在，并收紧权限（0700）。
+///
+/// 这些目录里放着剪贴板原文、来源 App 图标、日志等用户内容，
+/// 默认 `create_dir_all` 受 umask 影响会是 0755，同机其它用户可遍历。
 pub fn ensure_dirs() -> std::io::Result<()> {
-    std::fs::create_dir_all(files_dir())?;
-    std::fs::create_dir_all(icons_dir())?;
-    std::fs::create_dir_all(modules_dir())?;
-    std::fs::create_dir_all(logs_dir())?;
+    for dir in [data_dir(), files_dir(), icons_dir(), modules_dir(), logs_dir()] {
+        std::fs::create_dir_all(&dir)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
     Ok(())
 }

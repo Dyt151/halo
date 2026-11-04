@@ -60,6 +60,12 @@ fn open_log() -> Option<File> {
         eprintln!("创建日志目录失败：{e}");
         return None;
     }
+    // 日志里会出现剪贴板原文片段，目录与文件都收紧到仅当前用户可读写。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    }
     let path = log_path();
     if let Ok(meta) = fs::metadata(&path) {
         if meta.len() > MAX_BYTES {
@@ -67,7 +73,14 @@ fn open_log() -> Option<File> {
         }
     }
     match OpenOptions::new().create(true).append(true).open(&path) {
-        Ok(file) => Some(file),
+        Ok(file) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+            }
+            Some(file)
+        }
         Err(e) => {
             eprintln!("打开日志文件失败：{e}");
             None

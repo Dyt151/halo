@@ -15,13 +15,24 @@ use std::os::unix::fs::PermissionsExt;
 /// 创建目录并确保仅当前用户可读写（0700）。
 ///
 /// 默认 `create_dir_all` 受 umask 影响，会把 `~/.halo` 数据目录暴露给同机其它用户。
-/// 这里在 Unix 上把已存在路径逐级收敛权限到 `~/.halo` 一层为止（更高层无权限会被忽略）；
+/// 这里在 Unix 上把已存在路径逐级收敛权限，**但只收敛到 home 目录之内为止**：
+/// 再往上（如 `/Users/<name>`）属于用户共享区域，macOS 默认是 755 + ACL，
+/// 剪贴板工具不应擅自改动它——那会影响文件共享、AirDrop 等系统行为。
 /// 其它平台退化为原生 `create_dir_all`。
 #[cfg(unix)]
 fn ensure_private_dir(path: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(path)?;
+    let home = std::env::home_dir();
     let mut cur = Some(path);
     while let Some(p) = cur {
+        // 到达 home 目录就停手：home 自身及其祖先的权限不属于本应用管辖。
+        if home.as_deref() == Some(p) {
+            break;
+        }
+        match &home {
+            Some(h) if p.starts_with(h) => {}
+            _ => break,
+        }
         let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700));
         cur = p.parent();
     }
@@ -55,7 +66,16 @@ pub fn open(path: &Path) -> CommandResult<Connection> {
     let mut last: Option<AppError> = None;
     for attempt in 0..OPEN_RETRIES {
         match open_once(path) {
-            Ok(conn) => return Ok(conn),
+            Ok(conn) => {
+                // 收紧数据库文件权限为仅当前用户可读写（防止同用户其它进程 / 备份读到明文）。
+                // 必须在**成功路径**上执行：SQLite 建库时的默认权限是 0644（受 umask 影响），
+                // 剪贴板内容是明文存库，不能对同机其它用户可读。
+                #[cfg(unix)]
+                {
+                    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+                }
+                return Ok(conn);
+            }
             Err(e) => {
                 last = Some(e);
                 if attempt + 1 < OPEN_RETRIES {
@@ -65,12 +85,6 @@ pub fn open(path: &Path) -> CommandResult<Connection> {
                 }
             }
         }
-    }
-
-    // 收紧数据库文件权限为仅当前用户可读写（防止同用户其它进程 / 备份读到明文）。
-    #[cfg(unix)]
-    {
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
 
     Err(last.unwrap_or_else(|| AppError::new(9001, "数据库迁移失败")))
