@@ -512,17 +512,29 @@ export function SearchField({
 export function CardGroup({
   title,
   subtitle,
+  action,
   className,
   children,
 }: {
   title?: string;
   subtitle?: string;
+  /** 标题右侧的操作区（如「刷新」按钮）。 */
+  action?: ReactNode;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <section className={cx("rounded-[10px] bg-group p-[16px]", className)}>
-      {title && <h4 className="mb-[12px] text-[13px]/[18px] font-semibold text-white">{title}</h4>}
+      {(title || action) && (
+        <div className={cx("mb-[12px] flex items-start justify-between gap-[12px]")}>
+          {title ? (
+            <h4 className="text-[13px]/[18px] font-semibold text-white">{title}</h4>
+          ) : (
+            <span />
+          )}
+          {action}
+        </div>
+      )}
       {subtitle && <p className="-mt-[8px] mb-[12px] text-[12px]/[16px] text-white/45">{subtitle}</p>}
       {children}
     </section>

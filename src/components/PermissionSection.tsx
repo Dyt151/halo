@@ -257,7 +257,15 @@ export default function PermissionSection() {
   );
 
   return (
-    <CardGroup title="权限与授权" subtitle="系统权限集中在这里，一次授权即可；状态改完点刷新">
+    <CardGroup
+      title="权限与授权"
+      subtitle="系统权限集中在这里，一次授权即可；在系统设置里改完回来点刷新"
+      action={
+        <Btn size="sm" onClick={() => void refresh()}>
+          刷新
+        </Btn>
+      }
+    >
       <div className="space-y-[2px]">
         <Row
           label="辅助功能"
@@ -278,9 +286,6 @@ export default function PermissionSection() {
           </Btn>
           <Btn size="sm" disabled={busy === "access"} onClick={() => void repairAccess()}>
             修复授权
-          </Btn>
-          <Btn size="sm" onClick={() => void refresh()}>
-            刷新
           </Btn>
           <Btn size="sm" onClick={() => void api.openSystemSettings("accessibility")}>
             打开系统设置
@@ -342,9 +347,6 @@ export default function PermissionSection() {
             onClick={() => void toggleFinder()}
           >
             {busy === "finder" ? "处理中…" : finder === "granted" ? "停用" : "启用"}
-          </Btn>
-          <Btn size="sm" onClick={() => void refresh()}>
-            刷新
           </Btn>
         </Row>
 

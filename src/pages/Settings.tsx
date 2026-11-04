@@ -231,7 +231,7 @@ export default function Settings({ section }: { section: MainPage }) {
           <PermissionSection />
 
           {draft ? (
-            <CardGroup title="通用">
+            <CardGroup title="基础设置" subtitle="剪贴板记录与界面外观">
               <div className="space-y-[2px]">
                 <ToggleRow
                   label="剪贴板监控"

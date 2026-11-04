@@ -56,10 +56,12 @@
 | 1 | **通用页丢失保存状态条** | 🔴 本次改造引入的回归 | 早退结构把通用页移出了主 return，导致底部「更改会自动保存 / 重试」条不渲染。已改为通用页回到共享 return 内，权限卡用 `draft ?` 分支独立渲染 |
 | 2 | **后端 `set_login_item` 吞掉镜像写入错误** | 🟠 既有缺陷 | `let _ = state.config.patch(...)` 把失败完全丢弃。已改为 `tracing::warn!` 记录（沿用项目既有日志约定，不用 `log` crate——它不在依赖里） |
 | 3 | **定位权限「打开系统设置」跳错面板** | 🟡 体验问题 | 原跳「隐私与安全性」总面板，用户还要自己往下找。已改为直达 `Privacy_LocationServices` 锚点 |
+| 4 | **侧边栏「通用」与卡片「通用」同名** | 🟡 视觉歧义 | 页面标题已是「通用」，第二个卡片改名为「基础设置」，副标题「剪贴板记录与界面外观」 |
+| 5 | **权限卡内两个「刷新」按钮冗余** | 🟡 交互冗余 | 给 `CardGroup` 增加可选 `action` 插槽，刷新上提到卡片标题右侧一行一处；行内两个刷新按钮移除。34 个 `CardGroup` 调用方行为不变（action 可选） |
 
 **两条经复核为误报、未做改动**：
 
-- 「修复授权」功能丢失 → 实际在 `src/components/PermissionSection.tsx:271` 有按钮、`:148` 有调用，功能完好（检索时漏了新增文件）。
+- 「修复授权」功能丢失 → 实际在 `src/components/PermissionSection.tsx:271` 有按钮、`:148` 有调用，功能完好（调查员的检索快照早于该实现落地）。
 - `settings.rs` 残留 `"permissions"` 字符串匹配 → 实际该文件无此匹配；全仓命中均为模块 manifest 的 `capability` 同名字段，与分区无关。
 
 ---
@@ -123,6 +125,7 @@
 | `src/pages/RingSettings.tsx` | 辅助功能行去按钮化改「去授权」；删除 `requestAx` / `repairAx` / `axNote` |
 | `src/components/ContextMenuSettings.tsx` | 两行改「去授权」；删除 `toggle` / `grant`；排查文案指向新路径 |
 | `src/components/FirstRunGuide.tsx` | 「查看权限设置」→ `general`；文案补「都在设置 → 通用里一次授权」 |
+| `src/components/ui.tsx` | `CardGroup` 增加可选 `action` 插槽（刷新按钮上提到卡片标题右侧）|
 | `src/pages/StatusBarSettings.tsx` | 补定位权限说明 |
 | `src/lib/ipc.ts` | 新增 `statusBarLocationAccess` |
 | `src-tauri/src/commands/statusbar.rs` | 新增 `statusbar_location_access` 命令 |
