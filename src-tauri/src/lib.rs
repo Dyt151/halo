@@ -285,6 +285,7 @@ pub fn run() {
             commands::statusbar_set_wifi,
             commands::statusbar_set_bluetooth,
             commands::statusbar_request_location,
+            commands::statusbar_location_access,
             commands::statusbar_battery_details,
             commands::statusbar_charge_to_full_state,
             commands::statusbar_charge_to_full,

@@ -11,11 +11,13 @@ import {
   consumePendingPage,
   hideCurrentWindow,
   onNavigate,
+  onSectionSwitcher,
   peekSettingsTab,
   takeSettingsTab,
   type MainPage,
 } from "../lib/windows";
 import { useAppVersion } from "../lib/version";
+import { normalizeSection } from "../lib/section";
 import { useClipStore } from "../store/useClipStore";
 import Settings from "../pages/Settings";
 import FirstRunGuide from "../components/FirstRunGuide";
@@ -104,17 +106,6 @@ const NAV: { key: MainPage; label: string; group: "功能" | "系统"; path: Rea
     ),
   },
   {
-    key: "permissions",
-    label: "权限",
-    group: "系统",
-    path: (
-      <>
-        <path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5z" />
-        <path d="m9 12 2 2 4-4" />
-      </>
-    ),
-  },
-  {
     key: "about",
     label: "关于",
     group: "系统",
@@ -126,36 +117,6 @@ const NAV: { key: MainPage; label: string; group: "功能" | "系统"; path: Rea
     ),
   },
 ];
-
-/** 分区别名：面板深链与旧配置里可能传来已下线的分区，统一映射到现有页（避免空白页）。 */
-function normalizeSection(raw: string | null | undefined): MainPage | null {
-  if (!raw) return null;
-  switch (raw) {
-    case "settings":
-      return "general";
-    case "convert":
-      return "ring";
-    // 已下线的分区：快捷键 / 快捷回复 / 模块。旧配置（last_settings_section）
-    // 或旧深链仍可能带这几个值，落到「通用」而不是白屏。
-    case "hotkeys":
-    case "replies":
-    case "modules":
-      return "general";
-    case "history":
-    case "general":
-    case "clipboard":
-    case "ring":
-    case "context-menu":
-    case "statusbar":
-    case "sync":
-    case "backup":
-    case "permissions":
-    case "about":
-      return raw;
-    default:
-      return null;
-  }
-}
 
 /** 侧边栏导航图标（16px，SF Symbols 风格描边）。 */
 function NavIcon({ children, active }: { children: React.ReactNode; active: boolean }) {
@@ -197,15 +158,32 @@ export default function MainWindow() {
     }
   };
 
-  // 首启引导「查看权限」：消费引导写入的目标分区，落到权限页（清单 42 / 任务 34）。
+  // 首启引导「查看权限」：权限已并入通用页，这里直接落通用页。
   const openGuidedSection = () => {
-    setSection(normalizeSection(takeSettingsTab()) ?? "permissions");
+    setSection(normalizeSection(takeSettingsTab()) ?? "general");
   };
 
   // 挂载时的引导分区已被采纳，这里清掉，避免下次打开主窗口又跳一次。
   useEffect(() => {
     clearSettingsTab();
   }, []);
+
+  // 登记跨分区跳转通道：权限收进「通用」后，其它页面要能跳回来授权。
+  //
+  // 用 ref 存最新的 setSection：下面的 effect 只在挂载时跑一次，
+  // 直接捕获函数会让通道长期持有首帧的闭包。回调本身只依赖
+  // setSectionState / persistedRef / patchConfig 这几个稳定引用，
+  // 但显式走 ref 更省心，也省得以后有人给 setSection 加依赖时踩坑。
+  const setSectionRef = useRef(setSection);
+  setSectionRef.current = setSection;
+
+  useEffect(
+    () =>
+      onSectionSwitcher((page) => {
+        setSectionRef.current(page);
+      }),
+    [],
+  );
 
   // 面板/托盘可请求主窗口落到指定分区。
   useEffect(() => {

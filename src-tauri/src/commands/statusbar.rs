@@ -116,6 +116,18 @@ pub async fn statusbar_request_location(app: AppHandle) -> &'static str {
     .unwrap_or("not_needed")
 }
 
+/// 定位授权的当前状态：Wi-Fi 名称读取用。
+///
+/// 权限中心要显示「已授权 / 未授权 / 已拒绝」，所以得能查状态而不只是发起申请。
+/// 读取 `CLLocationManager.authorizationStatus` 不需要主线程（纯查询，不弹窗），
+/// 因此不必走 `run_on_main_thread`。
+///
+/// 取值：`authorized` / `not_determined` / `denied` / `restricted`。
+#[tauri::command]
+pub fn statusbar_location_access() -> &'static str {
+    statusbar::wifi_name_access()
+}
+
 /// 电池详情页读数：只在页面打开时按需读（正版页面自己每 2 秒拉一次）。
 #[tauri::command]
 pub async fn statusbar_battery_details() -> statusbar::BatteryDetails {

@@ -53,7 +53,8 @@ export default function FirstRunGuide({ onOpenSettings }: { onOpenSettings: () =
   if (!visible) return null;
 
   const openPermissions = () => {
-    requestSettingsTab("permissions");
+    // 权限已并入「通用」页：引导落通用页即可，不再有独立的权限分区。
+    requestSettingsTab("general");
     dismiss();
     onOpenSettings();
   };
@@ -96,6 +97,7 @@ export default function FirstRunGuide({ onOpenSettings }: { onOpenSettings: () =
             <span className="text-white/80">两项权限按需授权。</span>
             「辅助功能」用于自动粘贴（未授权时只复制到剪贴板并提示原因）；
             「Finder 扩展」让右键菜单直接出现新建文件、开终端等动作。
+            都在「设置 → 通用」里一次授权。
           </p>
         </div>
 

@@ -226,6 +226,12 @@ export const api = {
   /** 申请定位权限：授权后 macOS 才会返回 Wi-Fi 名称。正版返回三态结果。 */
   statusBarRequestLocation: () =>
     invoke<"requested" | "open_location_settings" | "not_needed">("statusbar_request_location"),
+  /**
+   * 定位授权的当前状态（Wi-Fi 名称读取）。
+   * 取值：authorized / not_determined / denied / restricted。
+   */
+  statusBarLocationAccess: () =>
+    invoke<"authorized" | "not_determined" | "denied" | "restricted">("statusbar_location_access"),
   /** 电池详情页读数（打开页面后每 2 秒拉一次）。 */
   statusBarBatteryDetails: () =>
     invoke<StatusBarBatteryDetails>("statusbar_battery_details"),

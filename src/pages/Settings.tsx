@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ContextMenuSettings from "../components/ContextMenuSettings";
 import HotkeySettings from "../components/HotkeySettings";
-import PermissionCenter from "../components/PermissionCenter";
+import PermissionSection from "../components/PermissionSection";
 import SyncSettings from "../components/SyncSettings";
 import BackupSettings from "../components/BackupSettings";
 import StatusBarSettings from "./StatusBarSettings";
@@ -30,7 +30,6 @@ import {
   CloseButton,
   Divider,
   Input,
-  Notice,
   Pill,
   Row,
   Segment,
@@ -62,13 +61,6 @@ const AUTOSAVE_DELAY_MS = 400;
 
 type SaveState = "idle" | "pending" | "saved" | "error";
 
-/** `login_item_status` / `set_login_item` 的返回结构（SMAppService）。 */
-interface LoginItemStatus {
-  supported: boolean;
-  enabled: boolean;
-  requires_approval: boolean;
-}
-
 /** `app_info` 的返回结构（关于页 E10）。 */
 interface AppInfo {
   version: string;
@@ -95,8 +87,6 @@ export default function Settings({ section }: { section: MainPage }) {
   const [draft, setDraft] = useState<Config | null>(null);
   const [blacklistInput, setBlacklistInput] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  // 登录项真实状态（评审 M10）：以 SMAppService 为准，配置里的 launch_at_login 只是镜像。
-  const [loginItem, setLoginItem] = useState<LoginItemStatus | null>(null);
   // 用户已编辑未保存时，外部 config 刷新（跨窗口改动）不覆盖草稿，
   // 否则输入会被静默清掉（评审 A7）。
   const dirtyRef = useRef(false);
@@ -133,13 +123,6 @@ export default function Settings({ section }: { section: MainPage }) {
     if (!dirtyRef.current) setDraft(config);
   }, [config]);
 
-  useEffect(() => {
-    void api
-      .loginItemStatus()
-      .then(setLoginItem)
-      .catch(() => setLoginItem({ supported: false, enabled: false, requires_approval: false }));
-  }, []);
-
   // 400ms 防抖自动保存：连续拖动滑块只提交一次。
   useEffect(() => {
     if (!draft || !dirtyRef.current) return;
@@ -172,6 +155,8 @@ export default function Settings({ section }: { section: MainPage }) {
   }, [flush]);
 
   // 非配置分区（自含组件）：直接路由，不依赖通用/剪贴板的草稿。
+  // 「permissions」不再是合法分区值：权限已并入通用，旧值由 `normalizeSection`
+  // 统一映射成 `general`（见 `lib/section.ts`），所以这里不需要再为它开分支。
   if (section !== "general" && section !== "clipboard") {
     switch (section) {
       case "ring":
@@ -186,17 +171,11 @@ export default function Settings({ section }: { section: MainPage }) {
         return <SyncSettings />;
       case "backup":
         return <BackupSettings />;
-      case "permissions":
-        return <PermissionCenter />;
       case "about":
         return <AboutSection />;
       default:
         return null;
     }
-  }
-
-  if (!draft) {
-    return <p className="py-[32px] text-center text-[13px] text-white/45">加载中…</p>;
   }
 
   const update = (patch: Partial<Config>) => {
@@ -206,21 +185,18 @@ export default function Settings({ section }: { section: MainPage }) {
     setSaveState("pending");
   };
 
-  /** 登录项开关：以系统返回值为准，再把镜像写回配置。 */
-  const toggleLoginItem = async (enabled: boolean) => {
-    try {
-      const next = await api.setLoginItem(enabled);
-      setLoginItem(next);
-      update({ launch_at_login: next.enabled });
-      if (next.requires_approval) {
-        toast("已注册登录项，请在系统设置中允许", { tone: "info", duration: 4200 });
-      } else {
-        toast(next.enabled ? "已开启开机启动" : "已关闭开机启动", { tone: "info" });
-      }
-    } catch (e) {
-      toastError(e, "设置登录项失败");
-    }
-  };
+  // 权限状态与配置无关：配置加载慢或加载失败时，权限信息照样要能看到
+  // （用户正是靠它排查「为什么功能不生效」）。所以权限卡不走草稿守卫，
+  // 而是在通用页内部按 draft 是否就绪分别渲染。
+  const isGeneral = section === "general";
+
+  if (!draft && !isGeneral) {
+    return <p className="py-[32px] text-center text-[13px] text-white/45">加载中…</p>;
+  }
+
+  // 收窄用：通用页允许 draft 为空（权限卡照常显示），但下面这些计算
+  // 只有 draft 就绪时才有意义，所以统一走这个局部变量。
+  const cfg = draft;
 
   // 「已保存」不再 1.5s 就消失（评审 U11）：保留到下一次改动，用户随时能确认状态。
   const saveStatus =
@@ -232,92 +208,72 @@ export default function Settings({ section }: { section: MainPage }) {
           ? "正在保存…"
           : "更改会自动保存";
 
-  const ttlIndex = Math.max(0, TTL_OPTIONS.findIndex((o) => o.days === draft.history_ttl_days));
-  const maxMb = Math.round(draft.max_bytes / 1024 / 1024);
+  const ttlIndex = Math.max(0, TTL_OPTIONS.findIndex((o) => o.days === (cfg?.history_ttl_days ?? 0)));
+  const maxMb = Math.round((cfg?.max_bytes ?? 0) / 1024 / 1024);
 
   const addBlacklist = () => {
     const name = blacklistInput.trim();
-    if (!name) return;
-    if (draft.app_blacklist.some((b) => b.toLowerCase() === name.toLowerCase())) {
+    if (!name || !cfg) return;
+    if (cfg.app_blacklist.some((b) => b.toLowerCase() === name.toLowerCase())) {
       setBlacklistInput("");
       return;
     }
-    update({ app_blacklist: [...draft.app_blacklist, name] });
+    update({ app_blacklist: [...cfg.app_blacklist, name] });
     setBlacklistInput("");
   };
 
   return (
     <div className="space-y-[16px]">
-      {section === "general" && (
-        <CardGroup title="通用">
-          <div className="space-y-[2px]">
-            <ToggleRow
-              label="开机启动"
-              hint={
-                loginItem === null
-                  ? "正在检查登录项…"
-                  : !loginItem.supported
-                    ? "需要把 App 安装到「应用程序」文件夹后才能注册登录项"
-                    : loginItem.requires_approval
-                      ? "已注册，等待你在「系统设置 → 通用 → 登录项」中允许"
-                      : "登录时自动启动（后台常驻，不占 Dock）"
-              }
-              checked={loginItem?.enabled ?? draft.launch_at_login}
-              disabled={loginItem !== null && !loginItem.supported}
-              onChange={(v) => void toggleLoginItem(v)}
-            />
-            {loginItem?.requires_approval && (
-              <div className="py-[6px]">
-                <Notice tone="info">
-                  macOS 把该登录项放进了待确认列表。
-                  <button
-                    type="button"
-                    onClick={() => void api.openSystemSettings("login-items")}
-                    className="ml-[4px] text-accent-400 hover:underline"
-                  >
-                    打开登录项设置
-                  </button>
-                </Notice>
+
+      {isGeneral && (
+        <div className="space-y-[16px]">
+          {/* 权限卡与配置无关：配置没加载好时它照样要能看到。 */}
+          <PermissionSection />
+
+          {draft ? (
+            <CardGroup title="通用">
+              <div className="space-y-[2px]">
+                <ToggleRow
+                  label="剪贴板监控"
+                  hint="关闭后不再记录新的剪贴内容"
+                  checked={draft.monitor_enabled}
+                  onChange={(v) => update({ monitor_enabled: v })}
+                />
+                <Divider />
+                <ToggleRow
+                  label="提示音"
+                  hint="复制入库与回贴成功后播放系统音效"
+                  checked={draft.sound_enabled}
+                  onChange={(v) => update({ sound_enabled: v })}
+                />
+                <Divider />
+                <Row label="外观" hint="跟随系统时随 macOS 浅色/深色自动切换">
+                  <Segment
+                    items={[
+                      { value: "system", label: "跟随系统" },
+                      { value: "dark", label: "深色" },
+                      { value: "light", label: "浅色" },
+                    ]}
+                    value={(draft.theme as "system" | "dark" | "light") ?? "system"}
+                    onChange={(v) => update({ theme: v })}
+                  />
+                </Row>
               </div>
-            )}
-            <Divider />
-            <ToggleRow
-              label="剪贴板监控"
-              hint="关闭后不再记录新的剪贴内容"
-              checked={draft.monitor_enabled}
-              onChange={(v) => update({ monitor_enabled: v })}
-            />
-            <Divider />
-            <ToggleRow
-              label="提示音"
-              hint="复制入库与回贴成功后播放系统音效"
-              checked={draft.sound_enabled}
-              onChange={(v) => update({ sound_enabled: v })}
-            />
-            <Divider />
-            <Row label="外观" hint="跟随系统时随 macOS 浅色/深色自动切换">
-              <Segment
-                items={[
-                  { value: "system", label: "跟随系统" },
-                  { value: "dark", label: "深色" },
-                  { value: "light", label: "浅色" },
-                ]}
-                value={(draft.theme as "system" | "dark" | "light") ?? "system"}
-                onChange={(v) => update({ theme: v })}
-              />
-            </Row>
-          </div>
-        </CardGroup>
+            </CardGroup>
+          ) : (
+            <p className="py-[32px] text-center text-[13px] text-white/45">加载中…</p>
+          )}
+        </div>
       )}
 
-      {section === "clipboard" && (
+      {section === "clipboard" && cfg && (
         <div className="space-y-[16px]">
           <div className="grid grid-cols-1 items-start gap-[16px] md:grid-cols-2">
             <CardGroup title="面板" subtitle="快捷键唤出的悬浮横条">
               <div className="space-y-[2px]">
                 <SelectRow
                   label="出现位置"
-                  value={draft.board_position}
+                  value={cfg.board_position}
                   options={[
                     { value: "follow_cursor", label: "跟随光标" },
                     { value: "screen", label: "屏幕中央" },
@@ -330,7 +286,7 @@ export default function Settings({ section }: { section: MainPage }) {
                 <div className="py-[8px]">
                   <SliderRow
                     label="面板高度"
-                    value={draft.board_height_scale}
+                    value={cfg.board_height_scale}
                     min={20}
                     max={60}
                     step={5}
@@ -341,7 +297,7 @@ export default function Settings({ section }: { section: MainPage }) {
                 <Divider />
                 <SelectRow
                   label="卡片排列"
-                  value={draft.board_style}
+                  value={cfg.board_style}
                   options={[
                     { value: "horizontal", label: "横向" },
                     { value: "vertical", label: "纵向" },
@@ -352,7 +308,7 @@ export default function Settings({ section }: { section: MainPage }) {
                 <Divider />
                 <SelectRow
                   label="文本预览"
-                  value={draft.text_preview}
+                  value={cfg.text_preview}
                   options={[
                     { value: "rich", label: "富文本" },
                     { value: "plain", label: "纯文本" },
@@ -367,34 +323,34 @@ export default function Settings({ section }: { section: MainPage }) {
               <div className="space-y-[2px]">
                 <ToggleRow
                   label="粘贴后自动收起面板"
-                  checked={draft.auto_close_after_paste}
+                  checked={cfg.auto_close_after_paste}
                   onChange={(v) => update({ auto_close_after_paste: v })}
                 />
                 <Divider />
                 <ToggleRow
                   label="粘贴为纯文本"
-                  checked={draft.paste_as_plain}
+                  checked={cfg.paste_as_plain}
                   onChange={(v) => update({ paste_as_plain: v })}
                 />
                 <Divider />
                 <ToggleRow
                   label="粘贴前去除尾部空白"
                   hint="回贴文本时去掉末尾的空行/空格"
-                  checked={draft.paste_trim_trailing}
+                  checked={cfg.paste_trim_trailing}
                   onChange={(v) => update({ paste_trim_trailing: v })}
                 />
                 <Divider />
                 <ToggleRow
                   label="单击卡片直接回贴"
                   hint="关闭时单击仅复制，双击或 Enter 回贴"
-                  checked={draft.paste_on_single_click}
+                  checked={cfg.paste_on_single_click}
                   onChange={(v) => update({ paste_on_single_click: v })}
                 />
                 <Divider />
                 <ToggleRow
                   label="删除前确认"
                   hint="删除单条或清空历史前弹出确认"
-                  checked={draft.confirm_on_delete}
+                  checked={cfg.confirm_on_delete}
                   onChange={(v) => update({ confirm_on_delete: v })}
                 />
               </div>
@@ -448,7 +404,7 @@ export default function Settings({ section }: { section: MainPage }) {
               <div className="space-y-[12px]">
                 <SliderRow
                   label="最多保留条目"
-                  value={draft.max_items}
+                  value={cfg.max_items}
                   min={200}
                   max={5000}
                   step={100}
@@ -460,7 +416,7 @@ export default function Settings({ section }: { section: MainPage }) {
               <div className="space-y-[12px]">
                 <SliderRow
                   label="扫描间隔"
-                  value={draft.poll_interval_ms}
+                  value={cfg.poll_interval_ms}
                   min={100}
                   max={2000}
                   step={50}
@@ -473,7 +429,7 @@ export default function Settings({ section }: { section: MainPage }) {
             <div className="mt-[16px] border-t border-white/[0.08] pt-[12px]">
               <SelectRow
                 label="敏感内容策略"
-                value={draft.sensitivity}
+                value={cfg.sensitivity}
                 options={[
                   { value: "flag", label: "入库并标记" },
                   { value: "ignore", label: "不入库" },
@@ -500,9 +456,9 @@ export default function Settings({ section }: { section: MainPage }) {
                 添加
               </Btn>
             </div>
-            {draft.app_blacklist.length > 0 ? (
+            {cfg.app_blacklist.length > 0 ? (
               <div className="mt-[12px] flex flex-wrap gap-[6px]">
-                {draft.app_blacklist.map((name) => (
+                {cfg.app_blacklist.map((name) => (
                   <span
                     key={name}
                     className="inline-flex h-[22px] items-center gap-[6px] rounded-full bg-white/[0.06] pl-[10px] pr-[6px] text-[12px] text-white/60"
@@ -512,7 +468,7 @@ export default function Settings({ section }: { section: MainPage }) {
                       title={`移除 ${name}`}
                       tone="danger"
                       onClick={() =>
-                        update({ app_blacklist: draft.app_blacklist.filter((b) => b !== name) })
+                        update({ app_blacklist: cfg.app_blacklist.filter((b) => b !== name) })
                       }
                     />
                   </span>

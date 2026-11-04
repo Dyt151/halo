@@ -712,6 +712,14 @@ pub fn request_location_permission() -> &'static str {
     platform::request_location_permission()
 }
 
+/// 定位授权的当前状态（Wi-Fi 名称读取）。
+///
+/// 取值：`authorized` / `not_determined` / `denied` / `restricted`。
+/// 非 macOS 没有 Wi-Fi 名称这回事，一律按 `authorized` 报（等价于「不需要」）。
+pub fn wifi_name_access() -> &'static str {
+    platform::wifi_name_access()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

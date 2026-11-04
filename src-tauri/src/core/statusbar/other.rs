@@ -91,6 +91,11 @@ pub fn request_location_permission() -> &'static str {
     "not_needed"
 }
 
+/// 非 macOS 不读 Wi-Fi 名称，等价于「无需授权」。
+pub fn wifi_name_access() -> &'static str {
+    "authorized"
+}
+
 /// 没有菜单栏外观可读（托盘退回模板图，颜色不参与）。
 pub fn menu_bar_dark() -> Option<bool> {
     None

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/ipc";
 import { errorMessage } from "../lib/errors";
+import { goToSection } from "../lib/windows";
 import type { FinderIntegrationStatus } from "../lib/types";
 import { Btn, CardGroup, Notice, Row, cx } from "./ui";
 
@@ -20,7 +21,7 @@ const MENU_ITEMS: { title: string; description: string }[] = [
 export default function ContextMenuSettings() {
   const [status, setStatus] = useState<FinderIntegrationStatus | null>(null);
   const [accessibility, setAccessibility] = useState<boolean | null>(null);
-  const [busy, setBusy] = useState<null | "toggle" | "refresh" | "grant">(null);
+  const [busy, setBusy] = useState<null | "refresh">(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -43,42 +44,13 @@ export default function ContextMenuSettings() {
     void refresh();
   }, [refresh]);
 
-  const toggle = async () => {
-    if (!status) return;
-    setBusy("toggle");
-    setMessage(null);
-    try {
-      const next = await api.setFinderExtensionEnabled(!status.enabled);
-      setStatus(next);
-      setMessage(
-        next.enabled
-          ? "Finder 扩展已启用。到 Finder 里右键即可看到「新建文件 / 在终端中打开」。"
-          : "Finder 扩展已停用。",
-      );
-    } catch (e) {
-      setMessage(`切换 Finder 扩展失败：${errorMessage(e)}`);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const grant = async () => {
-    setBusy("grant");
-    setMessage(null);
-    try {
-      const trusted = await api.requestAccessibility();
-      setAccessibility(trusted);
-      setMessage(
-        trusted
-          ? "辅助功能已授权，桌面右键会在几秒内自动生效。"
-          : "已弹出系统提示：请在「辅助功能」列表里勾选 Halo（若之前有旧条目，先移除再勾选），然后点「刷新状态」。",
-      );
-    } catch (e) {
-      setMessage(`请求辅助功能权限失败：${errorMessage(e)}`);
-    } finally {
-      setBusy(null);
-    }
-  };
+  /**
+   * 跳到「通用 → 权限与授权」。
+   *
+   * 授权与启停都收敛到那一处了，这里只保留状态诊断——
+   * 用户在右键菜单页才看得到「扩展为什么没生效」。
+   */
+  const gotoPermissionHub = () => goToSection("general");
 
   const enabled = status?.enabled ?? false;
   const appexMissing = status?.supported === true && status.appex_present === false;
@@ -114,7 +86,7 @@ export default function ContextMenuSettings() {
         </ul>
       </CardGroup>
 
-      <CardGroup title="扩展状态">
+      <CardGroup title="扩展状态" subtitle="授权与启停都在「通用 → 权限与授权」里统一管理">
         <Row
           label={
             <span className="flex items-center gap-[6px]">
@@ -128,15 +100,11 @@ export default function ContextMenuSettings() {
             </span>
           }
         >
-          <Btn
-            variant="primary"
-            disabled={busy !== null || !status?.supported || appexMissing}
-            onClick={() => void toggle()}
-          >
-            {busy === "toggle" ? "处理中…" : enabled ? "停用" : "启用扩展"}
-          </Btn>
-          <Btn size="sm" disabled={busy !== null} onClick={() => void refresh()}>
+          <Btn size="sm" onClick={() => void refresh()}>
             {busy === "refresh" ? "刷新中…" : "刷新状态"}
+          </Btn>
+          <Btn size="sm" onClick={gotoPermissionHub}>
+            去授权
           </Btn>
         </Row>
 
@@ -160,16 +128,8 @@ export default function ContextMenuSettings() {
             </span>
           }
         >
-          <Btn
-            variant={accessibility ? undefined : "primary"}
-            disabled={busy !== null || accessibility === true}
-            onClick={() => void grant()}
-          >
-            {busy === "grant"
-              ? "处理中…"
-              : accessibility
-                ? "已授权"
-                : "授予辅助功能"}
+          <Btn size="sm" onClick={gotoPermissionHub}>
+            去授权
           </Btn>
         </Row>
 
@@ -178,7 +138,7 @@ export default function ContextMenuSettings() {
             <Notice tone="info">
               未授权「辅助功能」时，桌面右键仍会出现 Halo 项，但用的是 Finder 原生菜单；
               授权后会换成 Halo 自己的菜单，同时恢复 Option＋拖动的环形转换。
-              点上方「授予辅助功能」并在系统提示里勾选 Halo；授权后最多等 3 秒自动生效，不用重启。
+              在「通用 → 权限与授权」里授权后最多等 3 秒自动生效，不用重启。
               重新打包 App 后系统可能要求重新勾选一次。
             </Notice>
           </div>
@@ -203,7 +163,7 @@ export default function ContextMenuSettings() {
         {!appexMissing && status?.appex_present && !status.installed && (
           <div className="mt-[12px]">
             <Notice tone="info">
-              系统插件库里还没有这条扩展记录（App 重新打包后常见），点「启用扩展」即可重新注册。
+              系统插件库里还没有这条扩展记录（App 重新打包后常见），在「通用 → 权限与授权」里点「启用」即可重新注册。
             </Notice>
           </div>
         )}
@@ -220,10 +180,10 @@ export default function ContextMenuSettings() {
           <li className="list-decimal">
             确认当前运行的是打包后的 Halo.app（不是
             <span className="mx-[4px] font-mono text-white/75">tauri dev</span>
-            的裸二进制），并点上方「启用扩展」。
+            的裸二进制），并在「通用 → 权限与授权」里启用扩展。
           </li>
           <li className="list-decimal">
-            桌面接管依赖「辅助功能」权限：在设置 → 权限中心授权后最多等 3 秒会自动生效，
+            桌面接管依赖「辅助功能」权限：在「通用 → 权限与授权」授权后最多等 3 秒会自动生效，
             不需要重启 App；Finder 窗口内的菜单不需要这个权限。
           </li>
           <li className="list-decimal">

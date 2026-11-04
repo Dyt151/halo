@@ -25,6 +25,9 @@ export const INPUT_HUD_WINDOW_LABEL = "imehud";
  *
  * 快捷键 / 模块 分区已下线（用户只需要面板 + 设置），
  * 旧值由 `MainWindow::normalizeSection` 回落到「通用」。
+ *
+ * 权限页已并入「通用」：权限与授权是通用页里的一个区块，
+ * 旧的 `permissions` 标识同样由 `normalizeSection` 映射到 `general`。
  */
 export type MainPage =
   | "general"
@@ -34,7 +37,6 @@ export type MainPage =
   | "statusbar"
   | "sync"
   | "backup"
-  | "permissions"
   | "about"
   | "history";
 
@@ -136,6 +138,43 @@ export function takeSettingsTab(): string | null {
   const tab = pendingSettingsTab;
   pendingSettingsTab = null;
   return tab;
+}
+
+/* ------------------------------------------------------------------ */
+/* 跨分区跳转（同一窗口内）                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 子组件请求主窗口切换分区的回调。
+ *
+ * 主窗口的分区切换状态（`MainWindow.tsx` 的 `useState`）在子组件树之外，
+ * 而「权限与授权」收进「通用」后，环形转换 / 右键菜单等页面需要能跳回
+ * 通用页去授权。事件广播要过 Rust 一圈，而这里是同窗口内的纯前端跳转，
+ * 用一个模块级回调最直接：主窗口挂载时登记，子组件随时调用。
+ */
+type SectionSwitcher = (page: MainPage) => void;
+
+let switchSection: SectionSwitcher | null = null;
+
+/**
+ * 登记分区切换回调（由主窗口调用）。
+ *
+ * 返回注销函数：主窗口卸载时必须注销，否则旧回调会一直持有已销毁组件的状态。
+ */
+export function onSectionSwitcher(fn: SectionSwitcher): () => void {
+  switchSection = fn;
+  return () => {
+    if (switchSection === fn) switchSection = null;
+  };
+}
+
+/**
+ * 跳到指定分区（子组件调用）。
+ *
+ * 主窗口尚未挂载时静默失败——那时没有可跳转的目标，静默比抛错好。
+ */
+export function goToSection(page: MainPage): void {
+  switchSection?.(page);
 }
 
 /**

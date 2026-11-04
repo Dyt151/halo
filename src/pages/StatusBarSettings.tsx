@@ -490,6 +490,10 @@ export default function StatusBarSettings() {
         <Notice tone="info" className="mt-[12px]">
           这些能力依赖 macOS 私有接口或 root 权限，不影响上面已接入的模块。
         </Notice>
+        <Notice tone="info" className="mt-[12px]">
+          「网络」模块显示 Wi-Fi 名称需要定位权限（macOS 14.4+）。
+          开启网络模块时会顺手弹窗申请；也可以在「通用 → 权限与授权」里统一查看与授权。
+        </Notice>
       </CardGroup>
     </div>
   );

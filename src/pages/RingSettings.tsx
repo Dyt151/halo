@@ -20,6 +20,7 @@ import RingEditor, { RING_EDITOR_CENTER, ringPointOf } from "../components/RingE
 import { Btn, CardGroup, Divider, Input, Row, SearchField, Segment, SliderRow, ToggleRow } from "../components/ui";
 import { api } from "../lib/ipc";
 import { toast } from "../lib/toast";
+import { goToSection } from "../lib/windows";
 import {
   DRAG_THRESHOLD,
   MAX_SLICES,
@@ -244,8 +245,6 @@ export default function RingSettings() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [editingPreset, setEditingPreset] = useState<string | null>(null);
   const [gesture, setGesture] = useState<GestureStatus | null>(null);
-  /** 权限操作的反馈（与拖动提示分开，不串到圆环预览下面）。 */
-  const [axNote, setAxNote] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
 
   const ringRef = useRef<HTMLDivElement>(null);
@@ -286,33 +285,13 @@ export default function RingSettings() {
 
   const axOk = gesture?.accessibility ?? null;
 
-  /** 请求辅助功能授权：系统弹窗并把 Halo 加进白名单。 */
-  const requestAx = () => {
-    void api
-      .requestAccessibility()
-      .then((granted) => {
-        setAxNote(
-          granted
-            ? "已授权，手势会在 3 秒内自动接管。"
-            : "系统提示已弹出：勾选 Halo 后本页会自动变成「已授权」，不用重启。",
-        );
-      })
-      .catch(() => setAxNote("请求失败，请用「打开系统设置」手动添加。"));
-  };
-
   /**
-   * 清除失效的授权记录。
+   * 授权动作已收敛到「设置 → 通用 → 权限与授权」。
    *
-   * ad-hoc 签名的 App 每次重新构建都会换 cdhash，系统留着一条指向旧二进制的
-   * 记录：界面上开关是打开的，`AXIsProcessTrusted()` 却一直是 false。这种时候
-   * 重新勾选也没用，必须先 reset 再登记（实际最常遇到的坑就是这个）。
+   * 这里保留状态诊断（未授权时用户在这里才知道手势为什么不生效），
+   * 但不再提供第二处授权按钮——两处授权入口会让用户怀疑哪一处才是真的。
    */
-  const repairAx = () => {
-    void api
-      .ringGestureRepair()
-      .then((r) => setAxNote(r.detail))
-      .catch(() => setAxNote("修复失败：请在系统设置里先取消勾选、再重新勾选 Halo。"));
-  };
+  const gotoPermissionHub = () => goToSection("general");
 
   const ring = config?.ring ?? null;
   const presets = useMemo(() => config?.conversion?.presets ?? [], [config]);
@@ -668,7 +647,7 @@ export default function RingSettings() {
           }}
         />
         <Divider />
-        <Row label="辅助功能权限" hint="全局手势与回贴共用同一套授权；重建 App 后需要重新勾选一次">
+        <Row label="辅助功能权限" hint="全局手势与回贴共用同一套授权；在「通用 → 权限与授权」里授权">
           <span
             className={
               axOk ? "text-[12px]/[16px] text-emerald-300/90" : "text-[12px]/[16px] text-amber-300/90"
@@ -677,17 +656,9 @@ export default function RingSettings() {
             {axOk === null ? "检测中…" : axOk ? "已授权" : "未授权：Option+拖动不会生效"}
           </span>
           {!axOk && (
-            <>
-              <Btn size="sm" onClick={requestAx}>
-                请求授权
-              </Btn>
-              <Btn size="sm" onClick={repairAx}>
-                修复授权
-              </Btn>
-              <Btn size="sm" onClick={() => void api.openSystemSettings("accessibility")}>
-                打开系统设置
-              </Btn>
-            </>
+            <Btn size="sm" onClick={gotoPermissionHub}>
+              去授权
+            </Btn>
           )}
         </Row>
         <Row label="事件监听" hint="授权后 3 秒内自动接管，不需要重启 App">
@@ -706,7 +677,6 @@ export default function RingSettings() {
             {gesture.tapAlive ? "最近一次没有响应" : "当前阻塞"}：{gesture.lastNote}
           </p>
         )}
-        {axNote && <p className="mt-[4px] text-[12px]/[16px] text-white/55">{axNote}</p>}
       </CardGroup>
 
       <CardGroup

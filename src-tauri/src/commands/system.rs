@@ -191,9 +191,16 @@ pub fn set_login_item(state: State<'_, AppState>, enabled: bool) -> CommandResul
     {
         macos::sm_set(enabled)?;
         // 配置只是镜像，真实状态以系统为准（下次启动时会用系统值回写 UI）。
-        let _ = state
+        //
+        // 镜像写失败不能让它静默消失：系统登录项已经生效，配置却没跟上时，
+        // 界面下次读到的还是旧值。这里记日志而不是直接返回错误——
+        // 用户的操作（开/关开机启动）本身已经成功了，报错会让人以为没生效。
+        if let Err(e) = state
             .config
-            .patch(serde_json::json!({ "launch_at_login": enabled }));
+            .patch(serde_json::json!({ "launch_at_login": enabled }))
+        {
+            tracing::warn!("写回 launch_at_login 镜像失败: {e}");
+        }
         Ok(login_item_status())
     }
     #[cfg(not(target_os = "macos"))]
