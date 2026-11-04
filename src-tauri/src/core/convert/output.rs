@@ -5,7 +5,7 @@
 //!    优先于策略，想替换源文件是另一个显式操作；
 //! 2. **先预留再写**：只查磁盘 `exists()` 会在并发下让两个文件拿到同一个空位，
 //!    所以分配时就把路径记进本 Job 的预留表；
-//! 3. **先写临时文件再 rename**：引擎写 `<目录>/.<名字>.clipbase-<id>.tmp`，
+//! 3. **先写临时文件再 rename**：引擎写 `<目录>/.<名字>.halo-<id>.tmp`，
 //!    成功关闭句柄后才提交到最终路径，失败 / 取消时删掉半成品，绝不留下一个
 //!    看起来像成功结果的残文件。
 
@@ -18,7 +18,7 @@ use super::format::ConvertFormat;
 use super::preset::{ConflictPolicy, OutputRule};
 use crate::lock_ext::LockExt;
 
-/// 残留临时文件的「过期」阈值：超过这个时间的 `.*.clipbase-*.tmp` 才算上次崩溃留下的。
+/// 残留临时文件的「过期」阈值：超过这个时间的 `.*.halo-*.tmp` 才算上次崩溃留下的。
 ///
 /// 不按「文件存在就删」处理：同一个输出目录里可能还有另一个进程/另一个窗口
 /// 正在写的临时文件，按时间隔开才不会双双失败。
@@ -79,7 +79,7 @@ impl OutputAllocator {
         std::fs::create_dir_all(&dir)
             .map_err(|e| AllocError::Io(format!("创建输出目录失败：{e}")))?;
         // 上一次转换被强杀（崩溃/关机/活动监视器）时，用户目录里会永久留下
-        // `.<文件名>.clipbase-<uuid>.tmp`。下次往同一个目录输出时顺手收敛。
+        // `.<文件名>.halo-<uuid>.tmp`。下次往同一个目录输出时顺手收敛。
         self.sweep_stale(&dir);
 
         let stem = req
@@ -131,7 +131,7 @@ impl OutputAllocator {
                 continue;
             }
             let temp_path = dir.join(format!(
-                ".{}.clipbase-{}.tmp",
+                ".{}.halo-{}.tmp",
                 candidate
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -185,8 +185,8 @@ impl OutputAllocator {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            // 只认本应用自己生成的临时名：`.<最终名>.clipbase-<uuid>.tmp`。
-            if !(name.starts_with('.') && name.contains(".clipbase-") && name.ends_with(".tmp")) {
+            // 只认本应用自己生成的临时名：`.<最终名>.halo-<uuid>.tmp`。
+            if !(name.starts_with('.') && name.contains(".halo-") && name.ends_with(".tmp")) {
                 continue;
             }
             let stale = entry
@@ -332,7 +332,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "clipbase-output-{}-{name}",
+            "halo-output-{}-{name}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

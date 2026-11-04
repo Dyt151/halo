@@ -286,7 +286,7 @@ export default function RingSettings() {
 
   const axOk = gesture?.accessibility ?? null;
 
-  /** 请求辅助功能授权：系统弹窗并把 ClipBase 加进白名单。 */
+  /** 请求辅助功能授权：系统弹窗并把 Halo 加进白名单。 */
   const requestAx = () => {
     void api
       .requestAccessibility()
@@ -294,7 +294,7 @@ export default function RingSettings() {
         setAxNote(
           granted
             ? "已授权，手势会在 3 秒内自动接管。"
-            : "系统提示已弹出：勾选 ClipBase 后本页会自动变成「已授权」，不用重启。",
+            : "系统提示已弹出：勾选 Halo 后本页会自动变成「已授权」，不用重启。",
         );
       })
       .catch(() => setAxNote("请求失败，请用「打开系统设置」手动添加。"));
@@ -311,7 +311,7 @@ export default function RingSettings() {
     void api
       .ringGestureRepair()
       .then((r) => setAxNote(r.detail))
-      .catch(() => setAxNote("修复失败：请在系统设置里先取消勾选、再重新勾选 ClipBase。"));
+      .catch(() => setAxNote("修复失败：请在系统设置里先取消勾选、再重新勾选 Halo。"));
   };
 
   const ring = config?.ring ?? null;

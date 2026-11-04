@@ -34,6 +34,7 @@ export function ringCenterTitle(count: number, category: string | null): string 
   if (!category) return `${count} 个文件`;
   if (category === "图片") return `${count} 张图片`;
   if (category === "文本") return `${count} 个文本`;
+  if (category === "文件夹") return `${count} 个文件夹`;
   if (category === "混合文件") return `${count} 个文件 · 混合`;
   return `${count} 个 ${category}`;
 }

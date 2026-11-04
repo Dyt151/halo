@@ -1,6 +1,6 @@
-//! 运行日志落地：`~/.clipbase/logs/clipbase.log`。
+//! 运行日志落地：`~/.halo/logs/halo.log`。
 //!
-//! 为什么必须写文件：用 `open ClipBase.app` 启动时 stdout / stderr 全被系统丢弃，
+//! 为什么必须写文件：用 `open Halo.app` 启动时 stdout / stderr 全被系统丢弃，
 //! 而环形盘这类「失败时没有任何 UI 反馈」的路径（缺辅助功能权限、CGEventTap
 //! 建不起来、AX 读不到起手文件）只能靠日志定位。开发时仍同时打到 stderr。
 //!
@@ -21,7 +21,7 @@ const MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 /// 日志文件路径。
 pub fn log_path() -> std::path::PathBuf {
-    storage::logs_dir().join("clipbase.log")
+    storage::logs_dir().join("halo.log")
 }
 
 /// 可克隆的写句柄：tracing 每次格式化都会要一个新的 writer。
@@ -63,7 +63,7 @@ fn open_log() -> Option<File> {
     let path = log_path();
     if let Ok(meta) = fs::metadata(&path) {
         if meta.len() > MAX_BYTES {
-            let _ = fs::rename(&path, dir.join("clipbase.log.1"));
+            let _ = fs::rename(&path, dir.join("halo.log.1"));
         }
     }
     match OpenOptions::new().create(true).append(true).open(&path) {
@@ -77,11 +77,11 @@ fn open_log() -> Option<File> {
 
 /// 初始化全局订阅器。只在 `run()` 里调用一次。
 ///
-/// 默认级别 `clipbase=debug,info`：本项目自己的 debug 日志（手势判定、起手文件、
+/// 默认级别 `halo=debug,info`：本项目自己的 debug 日志（手势判定、起手文件、
 /// 选盘结果）默认就落盘，第三方库仍只记 info，避免日志被淹没。
 pub fn init() {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("clipbase=debug,info"));
+        .unwrap_or_else(|_| EnvFilter::new("halo=debug,info"));
     // 两个分支各自创建 stderr layer：`fmt::Layer` 的订阅者类型参数是在
     // `.with()` 时推断的，共用一个变量会让两个分支的叠加类型互相矛盾。
     match open_log() {

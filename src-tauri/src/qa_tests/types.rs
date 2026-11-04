@@ -68,7 +68,7 @@ fn size_bytes_per_variant() {
 
 #[test]
 fn size_bytes_for_image_reads_file_length() {
-    let dir = std::env::temp_dir().join(format!("clipbase_qa_{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("halo_qa_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("img.png");
     std::fs::write(&path, [0u8; 42]).unwrap();

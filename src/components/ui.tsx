@@ -1,5 +1,5 @@
 /**
- * ClipBase 共享 UI 控件库
+ * Halo 共享 UI 控件库
  *
  * 所有控件严格遵循 docs/UI-DESIGN.md（Apple HIG 落地规范）：
  * - 高度固定（按钮 28 / 小按钮 24 / 输入框 28 / 导航 30 / 工具栏 44）

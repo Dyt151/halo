@@ -624,10 +624,17 @@ impl HistoryService {
 
     /// 回收无主图片文件（删除后未被撤销、或启动前遗留）。
     /// 返回删除的文件数。
+    ///
+    /// 比对的是**文件名**而不是完整路径：库里的绝对路径与当前 `files_dir()`
+    /// 一旦不一致（数据目录改名、换登录用户），按路径比对就会把全部图片
+    /// 判成孤儿一次删光。文件名（`clip_<hash>.png`）本身已经足够唯一。
     pub fn prune_orphan_images(&self) -> usize {
-        let referenced: std::collections::HashSet<String> = {
+        let referenced: std::collections::HashSet<std::ffi::OsString> = {
             let conn = self.db.lock_ok();
-            all_image_paths(&conn).into_iter().collect()
+            all_image_paths(&conn)
+                .iter()
+                .filter_map(|p| std::path::Path::new(p).file_name().map(|n| n.to_owned()))
+                .collect()
         };
         let dir = crate::storage::files_dir();
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -639,8 +646,7 @@ impl HistoryService {
             if !path.is_file() {
                 continue;
             }
-            let key = path.to_string_lossy().into_owned();
-            if !referenced.contains(&key) && std::fs::remove_file(&path).is_ok() {
+            if !referenced.contains(&entry.file_name()) && std::fs::remove_file(&path).is_ok() {
                 removed += 1;
             }
         }

@@ -1,0 +1,285 @@
+//! AppleSMC 功率传感器读取（正版 `SystemPowerReader` 的逐字节移植）。
+//!
+//! 正版的「系统供电 / 充电器输入 / 充入电池」三张卡全部来自 SMC，而不是
+//! `PowerTelemetryData`——后者在这台机器上空闲只有 1.1 W，正版同刻显示 11.7 W。
+//! 想跟正版读数一致就必须走同一条链路。这里只做固定 key 的只读访问：
+//! 不开枚举、不写命令 6、不留长连接。
+
+use std::mem::size_of;
+
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOServiceMatching(name: *const i8) -> *const std::ffi::c_void;
+    fn IOServiceGetMatchingService(main_port: u32, matching: *const std::ffi::c_void) -> u32;
+    fn IOServiceOpen(service: u32, task: u32, options: u32, connect: *mut u32) -> i32;
+    fn IOServiceClose(connect: u32) -> i32;
+    fn IOConnectCallStructMethod(
+        connect: u32,
+        selector: u32,
+        input: *const std::ffi::c_void,
+        input_cnt: usize,
+        output: *mut std::ffi::c_void,
+        output_cnt: *mut usize,
+    ) -> i32;
+    fn IOObjectRelease(object: u32) -> i32;
+}
+
+// `mach_task_self_`：libSystem 提供的数据符号（`mach_task_self()` 就是它的宏）。
+#[link(name = "System", kind = "dylib")]
+extern "C" {
+    static mach_task_self_: u32;
+}
+
+const MAIN_PORT: u32 = 0;
+/// `kIOUCStructMethodSelector`：AppleSMC 的数据通道。
+const SELECTOR: u32 = 2;
+/// SMC 用户客户端的定长请求/响应结构。
+const BUFFER: usize = 80;
+/// 命令字节所在偏移。
+const COMMAND_OFFSET: usize = 42;
+const CMD_KEY_INFO: u8 = 9;
+const CMD_READ_BYTES: u8 = 5;
+/// `keyInfo` 的 size / type 偏移，以及结果码与数据起点。
+const SIZE_OFFSET: usize = 28;
+const TYPE_OFFSET: usize = 32;
+const RESULT_OFFSET: usize = 40;
+const PAYLOAD_OFFSET: usize = 48;
+
+/// 四个固定传感器（fourcc 与正版一致）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+enum Sensor {
+    /// 整机总功率。
+    System = 0x5053_5452,
+    /// 适配器输入功率。
+    Input = 0x5044_5452,
+    /// 内置屏幕背光功率。
+    Display = 0x5044_4252,
+    /// 电池电流（A，放电为负）。
+    BatteryCurrent = 0x4230_4143,
+    /// 电池电压（V）。
+    BatteryVoltage = 0x4230_4156,
+}
+
+/// 一次刷新读到的功率传感器；字段全为尽力而为，读不到就是 None。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PowerSensors {
+    pub system_watts: Option<f64>,
+    pub input_watts: Option<f64>,
+    /// 内置屏幕背光（`PDBR`）：正版用它画「屏幕」分支，本版的详情页还没有这一档。
+    #[allow(dead_code)]
+    pub display_watts: Option<f64>,
+    pub battery_volts: Option<f64>,
+    pub battery_amps: Option<f64>,
+}
+
+impl PowerSensors {
+    /// 电池瞬时功率（W）：正版只在充电（电流为正）时把它当作「充入电池」。
+    pub fn battery_watts(&self) -> Option<f64> {
+        match (self.battery_volts, self.battery_amps) {
+            (Some(volts), Some(amps)) => Some(volts * amps),
+            _ => None,
+        }
+    }
+}
+
+/// 打开一次 AppleSMC、读完就关：正版每个刷新周期也是这么做的。
+pub fn read() -> PowerSensors {
+    let mut out = PowerSensors::default();
+    unsafe {
+        let name = b"AppleSMC\0".as_ptr().cast::<i8>();
+        let matching = IOServiceMatching(name);
+        if matching.is_null() {
+            return out;
+        }
+        let service = IOServiceGetMatchingService(MAIN_PORT, matching);
+        if service == 0 {
+            return out;
+        }
+        let mut connect: u32 = 0;
+        let opened = IOServiceOpen(service, mach_task_self_, 0, &mut connect);
+        IOObjectRelease(service);
+        if opened != 0 {
+            return out;
+        }
+        let exchange = |request: &[u8; BUFFER]| -> Option<[u8; BUFFER]> {
+            let mut response = [0u8; BUFFER];
+            let mut size = size_of::<[u8; BUFFER]>();
+            let status = IOConnectCallStructMethod(
+                connect,
+                SELECTOR,
+                request.as_ptr().cast(),
+                BUFFER,
+                response.as_mut_ptr().cast(),
+                &mut size,
+            );
+            (status == 0 && size == BUFFER).then_some(response)
+        };
+        out.system_watts = read_value(Sensor::System, &exchange);
+        out.input_watts = read_value(Sensor::Input, &exchange);
+        out.display_watts = read_value(Sensor::Display, &exchange);
+        // 电池电压/电流是 Apple Silicon 的定长整型 ABI，Intel 上直接放弃。
+        if cfg!(target_arch = "aarch64") {
+            out.battery_volts = read_value(Sensor::BatteryVoltage, &exchange);
+            out.battery_amps = read_value(Sensor::BatteryCurrent, &exchange);
+        }
+        IOServiceClose(connect);
+    }
+    out
+}
+
+/// `flt ` / `fpe2` / `sp78` / `si16` / `ui16` 五种类型码。
+const TYPE_FLT: u32 = 0x666c_7420;
+const TYPE_FPE2: u32 = 0x6670_6532;
+const TYPE_SP78: u32 = 0x7370_3738;
+const TYPE_SI16: u32 = 0x7369_3136;
+const TYPE_UI16: u32 = 0x7569_3136;
+
+fn accepts(sensor: Sensor, kind: u32, size: u32) -> bool {
+    match (kind, size) {
+        (TYPE_FLT, 4) | (TYPE_FPE2, 2) | (TYPE_SP78, 2) => true,
+        (TYPE_SI16, 2) => sensor == Sensor::BatteryCurrent,
+        (TYPE_UI16, 2) => sensor == Sensor::BatteryVoltage,
+        _ => false,
+    }
+}
+
+/// 传感器读数必须在物理上说得通；越界一律当作读不到（正版同规则）。
+///
+/// 注意单位：`BatteryVoltage` 返回伏、`BatteryCurrent` 返回安，其余是瓦。
+fn plausible(sensor: Sensor, watts: f64) -> bool {
+    if !watts.is_finite() {
+        return false;
+    }
+    match sensor {
+        // 开着的机器不可能消耗 0 W：读到 0 说明这条链路没在报数。
+        Sensor::System => watts > 0.0 && watts <= 1_000.0,
+        Sensor::Input => (0.0..=1_000.0).contains(&watts),
+        Sensor::Display => (0.0..=150.0).contains(&watts),
+        Sensor::BatteryCurrent => watts.abs() <= 30.0,
+        Sensor::BatteryVoltage => (1.0..=30.0).contains(&watts),
+    }
+}
+
+fn read_value<F>(sensor: Sensor, exchange: &F) -> Option<f64>
+where
+    F: Fn(&[u8; BUFFER]) -> Option<[u8; BUFFER]>,
+{
+    let mut request = [0u8; BUFFER];
+    let key = sensor as u32;
+    for offset in 0..4 {
+        request[offset] = ((key >> (offset * 8)) & 0xff) as u8;
+    }
+    request[COMMAND_OFFSET] = CMD_KEY_INFO;
+    let info = exchange(&request)?;
+    if info[RESULT_OFFSET] != 0 {
+        return None;
+    }
+    let size = le_u32(&info, SIZE_OFFSET);
+    let kind = le_u32(&info, TYPE_OFFSET);
+    if !accepts(sensor, kind, size) {
+        return None;
+    }
+    // 第二次调用要把 keyInfo 的 size/type 原样回填，驱动才认这次读字节。
+    request[SIZE_OFFSET..SIZE_OFFSET + 4].copy_from_slice(&info[SIZE_OFFSET..SIZE_OFFSET + 4]);
+    request[COMMAND_OFFSET] = CMD_READ_BYTES;
+    let response = exchange(&request)?;
+    if response[RESULT_OFFSET] != 0 {
+        return None;
+    }
+    let raw = decode(kind, &response)?;
+    plausible(sensor, raw).then_some(raw)
+}
+
+fn decode(kind: u32, response: &[u8; BUFFER]) -> Option<f64> {
+    let p = &response[PAYLOAD_OFFSET..];
+    if kind == TYPE_FLT {
+        let bits = le_u32(response, PAYLOAD_OFFSET);
+        return Some(f64::from(f32::from_bits(bits)));
+    }
+    if kind == TYPE_SI16 || kind == TYPE_UI16 {
+        // 整型电池传感器是小端、毫单位。
+        let raw = u16::from_le_bytes([p[0], p[1]]);
+        let value = if kind == TYPE_SI16 {
+            i16::from_le_bytes([p[0], p[1]]) as f64
+        } else {
+            f64::from(raw)
+        };
+        return Some(value / 1_000.0);
+    }
+    // 定点数按大端取字节。
+    let raw = (u16::from(p[0]) << 8) | u16::from(p[1]);
+    if kind == TYPE_FPE2 {
+        Some(f64::from(raw) / 4.0)
+    } else {
+        Some(f64::from(i16::from_be_bytes(raw.to_be_bytes())) / 256.0)
+    }
+}
+
+fn le_u32(bytes: &[u8; BUFFER], at: usize) -> u32 {
+    u32::from(bytes[at])
+        | (u32::from(bytes[at + 1]) << 8)
+        | (u32::from(bytes[at + 2]) << 16)
+        | (u32::from(bytes[at + 3]) << 24)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{accepts, decode, plausible, Sensor, TYPE_FPE2, TYPE_FLT, TYPE_SI16, TYPE_SP78};
+
+    fn buffer(payload: &[u8]) -> [u8; super::BUFFER] {
+        let mut out = [0u8; super::BUFFER];
+        out[super::PAYLOAD_OFFSET..super::PAYLOAD_OFFSET + payload.len()]
+            .copy_from_slice(payload);
+        out
+    }
+
+    #[test]
+    fn flt_decodes_little_endian_float() {
+        let mut raw = [0u8; super::BUFFER];
+        raw[super::PAYLOAD_OFFSET..super::PAYLOAD_OFFSET + 4].copy_from_slice(&11.75f32.to_le_bytes());
+        assert_eq!(decode(TYPE_FLT, &raw), Some(11.75));
+    }
+
+    #[test]
+    fn fixed_point_sensors_decode_big_endian() {
+        // fpe2：293/4 = 73.25 W；sp78：0x0400/256 = 4 W。
+        assert_eq!(decode(TYPE_FPE2, &buffer(&[0x01, 0x25])), Some(73.25));
+        assert_eq!(decode(TYPE_SP78, &buffer(&[0x04, 0x00])), Some(4.0));
+    }
+
+    #[test]
+    fn only_the_documented_type_size_pairs_are_accepted() {
+        assert!(accepts(Sensor::System, TYPE_FLT, 4));
+        assert!(accepts(Sensor::BatteryCurrent, 0x7369_3136, 2));
+        assert!(!accepts(Sensor::System, 0x7369_3136, 2));
+        assert!(!accepts(Sensor::BatteryVoltage, 0x7369_3136, 2));
+    }
+
+    #[test]
+    fn implausible_readings_are_rejected() {
+        assert!(!plausible(Sensor::System, 0.0));
+        assert!(plausible(Sensor::System, 11.68));
+        assert!(plausible(Sensor::Input, 0.0));
+        assert!(!plausible(Sensor::BatteryCurrent, 31.0));
+        assert!(!plausible(Sensor::BatteryVoltage, f64::NAN));
+    }
+
+    /// 真机链路自检：`cargo test -- --ignored --nocapture smc`。
+    /// 正版同刻的读数就是这里应当出现的数字（`PSTR` = 系统供电）。
+    #[test]
+    #[ignore = "需要真机 SMC"]
+    fn reads_live_smc_power_sensors() {
+        let sensors = super::read();
+        println!("PSTR 系统供电 = {:?}", sensors.system_watts);
+        println!("PDTR 充电器输入 = {:?}", sensors.input_watts);
+        println!("PDBR 屏幕背光 = {:?}", sensors.display_watts);
+        println!(
+            "B0AV/B0AC = {:?} V / {:?} A → {:?}",
+            sensors.battery_volts,
+            sensors.battery_amps,
+            sensors.battery_watts()
+        );
+        assert!(sensors.system_watts.is_some(), "整机功率读不到");
+    }
+}

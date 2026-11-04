@@ -7,10 +7,10 @@ import FinderSync
 /// 无法写任意目录，也不应该承担这些动作；这样只有一条执行路径，行为不会漂移。
 /// 环形转换**不进右键菜单**：它的唯一入口是 Finder 里 Option＋左键拖动。
 
-private let extensionBundleIdentifier = "com.clipbase.app.FinderExtension"
-private let appGroupIdentifier = "group.com.clipbase.app"
-private let wakeURLString = "clipbase-finder://wake"
-private let queueFolderName = "ClipBaseFinder/Requests"
+private let extensionBundleIdentifier = "com.halo.desktop.FinderExtension"
+private let appGroupIdentifier = "group.com.halo.desktop"
+private let wakeURLString = "halo-finder://wake"
+private let queueFolderName = "HaloFinder/Requests"
 
 // 动作名必须与 Rust `ServiceAction::message()` 一致。
 private enum Action: String {
@@ -20,8 +20,8 @@ private enum Action: String {
 }
 
 /// Info.plist 的 `NSExtensionPrincipalClass` 指向这个 ObjC 名。
-@objc(ClipBaseFinderSync)
-final class ClipBaseFinderSync: FIFinderSync {
+@objc(HaloFinderSync)
+final class HaloFinderSync: FIFinderSync {
     private let fileManager = FileManager.default
 
     override init() {
@@ -75,7 +75,7 @@ final class ClipBaseFinderSync: FIFinderSync {
     }
 
     private func buildMenu() -> NSMenu {
-        let menu = NSMenu(title: "ClipBase")
+        let menu = NSMenu(title: "Halo")
         menu.autoenablesItems = false
 
         // Finder 对二级菜单项的 action/representedObject 转发不可靠，所以把
@@ -196,11 +196,11 @@ final class ClipBaseFinderSync: FIFinderSync {
     }
 
     private func log(_ message: String) {
-        NSLog("ClipBaseFinder[\(extensionBundleIdentifier)]: %@", message)
+        NSLog("HaloFinder[\(extensionBundleIdentifier)]: %@", message)
         guard let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return
         }
-        let dir = support.appendingPathComponent("ClipBaseFinder", isDirectory: true)
+        let dir = support.appendingPathComponent("HaloFinder", isDirectory: true)
         try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("finder.log")
 

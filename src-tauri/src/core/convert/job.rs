@@ -351,7 +351,7 @@ pub fn run_with_cancel(
     register(&job_id, &cancel);
     job.state = JobState::Running;
 
-    let work_dir = std::env::temp_dir().join(format!("clipbase-convert-{job_id}"));
+    let work_dir = std::env::temp_dir().join(format!("halo-convert-{job_id}"));
     if let Err(e) = std::fs::create_dir_all(&work_dir) {
         // 临时目录建不出来时多步转换必然失败：与其让每个 worker 各报一句
         // 看不懂的 io 错误，不如把真原因一次性写进每个文件结果（进度事件
@@ -495,7 +495,7 @@ fn convert_one(
     let Some(from) = detect_format(source) else {
         return result.skip_with(
             SkipCode::UnknownFormat,
-            "不是 ClipBase 支持的格式（图片 / Markdown / HTML / TXT）",
+            "不是 Halo 支持的格式（图片 / Markdown / HTML / TXT）",
         );
     };
     result.detected_format = Some(from.as_str().to_string());
@@ -725,7 +725,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "clipbase-job-{}-{name}",
+            "halo-job-{}-{name}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

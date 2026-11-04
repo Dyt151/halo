@@ -62,7 +62,7 @@ impl FinderSelection {
                 Some("请先切到 Finder 窗口并选中文件，再按快捷键。".into())
             }
             Self::PermissionDenied => Some(
-                "没有「控制 Finder」的自动化权限。到 系统设置 → 隐私与安全性 → 自动化 里允许 ClipBase 控制 Finder。"
+                "没有「控制 Finder」的自动化权限。到 系统设置 → 隐私与安全性 → 自动化 里允许 Halo 控制 Finder。"
                     .into(),
             ),
             Self::Timeout => Some("Finder 没有响应，稍后再试一次。".into()),
@@ -124,7 +124,7 @@ pub fn frontmost_is_finder() -> bool {
 
 /// 环形转换是否可以在当前现场唤出。
 ///
-/// 允许两种前台情形：① Finder（正常路径）；② ClipBase 自己
+/// 允许两种前台情形：① Finder（正常路径）；② Halo 自己
 ///（环形盘/回复选择器拿到焦点后再次按快捷键）。后者不能判成「非 Finder」，
 /// 否则用户按第二次快捷键只会收到一句答非所问的提示。
 pub fn ring_context_ok() -> bool {
@@ -138,12 +138,12 @@ pub fn ring_context_ok() -> bool {
     }
 }
 
-/// 起手点取证结果（Integrated §3.1：拖动内容必须包含文件才进入会话）。
+/// 起手点取证结果（Integrated §3.1：拖动内容必须包含文件或文件夹才进入会话）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartHit {
-    /// 指针下就是 Finder 里的文件。
+    /// 指针下就是 Finder 里的文件或文件夹（目录只保留打包等工具动作）。
     File(String),
-    /// 指针在 Finder 里，但不是文件（空白处、工具栏、侧边栏、文件夹）。
+    /// 指针在 Finder 里，但不是文件（空白处、工具栏、侧边栏）。
     ///
     /// 与 `Unknown` 分开是为了守住验收项「非文件拖动不显示圆环」：这一种是
     /// **确定不是文件**，不应该弹一张「没读到文件」的提示盘挡在屏幕中间。
@@ -209,7 +209,10 @@ mod tests {
         let raw = "/Users/demo/a.png\u{1f}/Users/demo/b folder/c.jpg\u{1f}";
         assert_eq!(
             split_paths(raw),
-            vec!["/Users/demo/a.png".to_string(), "/Users/demo/b folder/c.jpg".to_string()]
+            vec![
+                "/Users/demo/a.png".to_string(),
+                "/Users/demo/b folder/c.jpg".to_string()
+            ]
         );
         assert!(split_paths("").is_empty());
         assert!(split_paths("\u{1f}\u{1f}").is_empty());
@@ -219,7 +222,10 @@ mod tests {
     fn split_paths_keeps_newline_inside_a_file_name() {
         // 文件名含换行时不能被误当成两条记录。
         let raw = "/Users/demo/weird\nname.png";
-        assert_eq!(split_paths(raw), vec!["/Users/demo/weird\nname.png".to_string()]);
+        assert_eq!(
+            split_paths(raw),
+            vec!["/Users/demo/weird\nname.png".to_string()]
+        );
     }
 
     #[test]
@@ -227,7 +233,9 @@ mod tests {
         assert!(is_permission_error(
             "osascript: execution error:  Unauthorized Access -1743"
         ));
-        assert!(is_permission_error("“ClipBase”遇到错误：应用程序没有运行。-1743"));
+        assert!(is_permission_error(
+            "“Halo”遇到错误：应用程序没有运行。-1743"
+        ));
         assert!(!is_permission_error("syntax error"));
         assert!(is_timeout_error("AppleEvent已超时。-1712"));
         assert!(!is_timeout_error("-1743"));
@@ -237,7 +245,10 @@ mod tests {
     fn selection_states_and_hints_are_distinct() {
         assert_eq!(FinderSelection::Empty.state(), "empty");
         assert_eq!(FinderSelection::NotFinder.state(), "not_finder");
-        assert_eq!(FinderSelection::PermissionDenied.state(), "permission_denied");
+        assert_eq!(
+            FinderSelection::PermissionDenied.state(),
+            "permission_denied"
+        );
         assert_eq!(FinderSelection::Timeout.state(), "timeout");
         // 只有 Items 才带路径，其余状态的 hint 必须非空（任务 17）。
         for s in [

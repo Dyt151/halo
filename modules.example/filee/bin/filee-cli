@@ -8,5 +8,5 @@ while IFS= read -r line; do
   # 提取请求 id（简单正则，满足演示即可）。
   id=$(printf '%s' "$line" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
   method=$(printf '%s' "$line" | sed -n 's/.*"method"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-  echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"ok\":true,\"module\":\"com.clipbase.filee\",\"method\":\"$method\",\"message\":\"filee-cli 已收到请求（示例响应）\"}}"
+  echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"ok\":true,\"module\":\"com.halo.filee\",\"method\":\"$method\",\"message\":\"filee-cli 已收到请求（示例响应）\"}}"
 done

@@ -5,7 +5,7 @@
 #   1. `gh auth login`（本机已有 gh）
 #   2. Xcode 生成代码签名证书，tauri.conf.json 的 signingIdentity 指向它
 #      （macOS 更新器拒绝 ad-hoc 签名的包，详见 docs/ 或 tauri updater 文档）
-#   3. 私钥在 ~/.tauri/clipbase-updater.key（`npx tauri signer generate` 生成，
+#   3. 私钥在 ~/.tauri/halo-updater.key（`npx tauri signer generate` 生成，
 #      对应的 pubkey 已写入 tauri.conf.json plugins.updater.pubkey）
 #
 # 用法：scripts/release.sh <版本号> [发布说明]
@@ -22,12 +22,12 @@ sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
 sed -i '' "s/\"version\": \"[0-9][^\"]*\"/\"version\": \"$VERSION\"/" \
     src-tauri/tauri.conf.json package.json
 
-# 构建（含 updater 签名产物：ClipBase.app.tar.gz + .sig）。
-TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/clipbase-updater.key" npx tauri build
+# 构建（含 updater 签名产物：Halo.app.tar.gz + .sig）。
+TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/halo-updater.key" npx tauri build
 
 BUNDLE="src-tauri/target/release/bundle/macos"
-APP_TGZ="$BUNDLE/ClipBase.app.tar.gz"
-SIG="$BUNDLE/ClipBase.app.tar.gz.sig"
+APP_TGZ="$BUNDLE/Halo.app.tar.gz"
+SIG="$BUNDLE/Halo.app.tar.gz.sig"
 [ -f "$APP_TGZ" ] && [ -f "$SIG" ] || { echo "更新产物缺失：$BUNDLE"; exit 1; }
 
 # 生成 latest.json：GitHub Releases 的静态 manifest，
@@ -43,7 +43,7 @@ manifest = {
         # 目标三元组 key 与 tauri-plugin-updater 的 target() 一致（macOS arm64）。
         "darwin-aarch64": {
             "signature": open(sig_path).read().strip(),
-            "url": f"https://github.com/Dyt151/clipbase/releases/download/v{version}/ClipBase.app.tar.gz",
+            "url": f"https://github.com/Dyt151/halo/releases/download/v{version}/Halo.app.tar.gz",
         }
     },
 }

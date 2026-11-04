@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ClipBase",
+  "productName": "Halo",
   "version": "0.1.0",
-  "identifier": "com.clipbase.app",
+  "identifier": "com.halo.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "ClipBase",
+        "title": "Halo",
         "width": 900,
         "height": 640,
         "minWidth": 420,
@@ -34,7 +34,7 @@
       },
       {
         "label": "panel",
-        "title": "ClipBase 面板",
+        "title": "Halo 面板",
         "width": 900,
         "height": 220,
         "minWidth": 320,
@@ -55,7 +55,7 @@
       },
       {
         "label": "ring",
-        "title": "ClipBase 环形转换",
+        "title": "Halo 环形转换",
         "width": 342,
         "height": 342,
         "resizable": false,
@@ -73,6 +73,49 @@
         "center": true,
         "visible": false,
         "visibleOnAllWorkspaces": true
+      },
+      {
+        "label": "traypanel",
+        "title": "Halo 状态栏",
+        "width": 330,
+        "height": 360,
+        "minWidth": 240,
+        "minHeight": 120,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "acceptFirstMouse": true,
+        "backgroundColor": "#00000000",
+        "center": true,
+        "visible": false,
+        "visibleOnAllWorkspaces": true
+      },
+      {
+        "label": "imehud",
+        "title": "Halo 输入法提示",
+        "width": 300,
+        "height": 96,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "backgroundColor": "#00000000",
+        "center": true,
+        "visible": false,
+        "visibleOnAllWorkspaces": true
       }
     ],
     "security": {
@@ -80,7 +123,7 @@
       "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420; object-src 'none'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$HOME/.clipbase/**"]
+        "scope": ["$HOME/.halo/**"]
       }
     }
   },
@@ -88,15 +131,18 @@
     "active": true,
     "targets": ["app"],
     "category": "Productivity",
+    "resources": {
+      "resources/zh-Hans.lproj/InfoPlist.strings": "zh-Hans.lproj/InfoPlist.strings"
+    },
     "shortDescription": "An open-source, extensible clipboard manager",
-    "longDescription": "ClipBase is an open-source, extensible clipboard manager for macOS.",
+    "longDescription": "Halo is an open-source, extensible clipboard manager for macOS.",
     "macOS": {
       "entitlements": "entitlements.plist",
       "infoPlist": "Info.plist",
       "hardenedRuntime": true,
       "signingIdentity": "-",
       "files": {
-        "PlugIns/ClipBaseFinderExtension.appex": "finder-extension/build/ClipBaseFinderExtension.appex"
+        "PlugIns/HaloFinderExtension.appex": "finder-extension/build/HaloFinderExtension.appex"
       }
     },
     "icon": [

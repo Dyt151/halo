@@ -9,12 +9,14 @@ import {
   onModuleStateChanged,
   onSyncCompleted,
 } from "./lib/events";
-import { isPanelWindow, isRingWindow } from "./lib/windows";
+import { isPanelWindow, isRingWindow, isInputHudWindow, isTrayPanelWindow } from "./lib/windows";
 import { getDialog } from "./lib/dialog";
 import { isTextEditing, isTextEditingAt } from "./lib/focus";
 import Panel from "./windows/Panel";
 import MainWindow from "./windows/MainWindow";
 import RingWindow from "./windows/RingWindow";
+import TrayPanel from "./windows/TrayPanel";
+import InputHud from "./windows/InputHud";
 import DialogHost from "./components/DialogHost";
 import ToastHost from "./components/ToastHost";
 
@@ -40,6 +42,8 @@ export default function App() {
   const [winKind] = useState(() => ({
     panel: isPanelWindow(),
     ring: isRingWindow(),
+    tray: isTrayPanelWindow(),
+    hud: isInputHudWindow(),
   }));
   const panel = winKind.panel;
 
@@ -51,13 +55,15 @@ export default function App() {
     const media = window.matchMedia("(prefers-color-scheme: light)");
     const apply = () => {
       const light =
-        !winKind.ring && (theme === "light" || (theme !== "dark" && media.matches));
+        !winKind.ring &&
+        !winKind.hud &&
+        (theme === "light" || (theme !== "dark" && media.matches));
       root.classList.toggle("light", light);
     };
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [theme, winKind.ring]);
+  }, [theme, winKind.ring, winKind.hud]);
 
   useEffect(() => {
     void refresh();
@@ -100,9 +106,9 @@ export default function App() {
   // 因此 Rust 侧菜单只负责转发事件，具体语义交给当前窗口的前端。
   // 同时监听键盘：WKWebView 里 ⌘Z 不一定能命中菜单项（焦点在自绘元素上时）。
   useEffect(() => {
-    // 环形盘是现场窗口，根本没有「历史列表」这个概念：
+    // 环形盘和输入法提示都是现场窗口，根本没有「历史列表」这个概念：
     // 在这里按 ⌘Z 不该去撤销一条用户看不见的删除。
-    if (winKind.ring) return;
+    if (winKind.ring || winKind.hud) return;
 
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
@@ -131,8 +137,8 @@ export default function App() {
       void (kind === "undo" ? undo() : redo());
     };
     const unlisteners = [
-      listen("clipbase://menu-undo", () => runMenuCommand("undo")),
-      listen("clipbase://menu-redo", () => runMenuCommand("redo")),
+      listen("halo://menu-undo", () => runMenuCommand("undo")),
+      listen("halo://menu-redo", () => runMenuCommand("redo")),
     ];
     window.addEventListener("keydown", onKey);
     return () => {
@@ -145,6 +151,10 @@ export default function App() {
     <>
       {winKind.ring ? (
         <RingWindow />
+      ) : winKind.hud ? (
+        <InputHud />
+      ) : winKind.tray ? (
+        <TrayPanel />
       ) : panel ? (
         <Panel />
       ) : (
@@ -152,7 +162,7 @@ export default function App() {
       )}
       <DialogHost />
       {/* 面板自带贴边的 Toast 容器（ToastHost variant="panel"），这里只服务管理窗口。 */}
-      {!panel && !winKind.ring && <ToastHost />}
+      {!panel && !winKind.ring && !winKind.tray && !winKind.hud && <ToastHost />}
     </>
   );
 }

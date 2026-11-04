@@ -78,7 +78,7 @@ export default function PermissionCenter() {
     void refresh();
   }, [refresh]);
 
-  /** 请求辅助功能授权：系统会弹窗并把 ClipBase 加进白名单，用户勾选后回来刷新。 */
+  /** 请求辅助功能授权：系统会弹窗并把 Halo 加进白名单，用户勾选后回来刷新。 */
   const requestAccess = async () => {
     setBusy("access");
     setMessage(null);
@@ -88,7 +88,7 @@ export default function PermissionCenter() {
       setMessage(
         granted
           ? "辅助功能已授权：回贴与 Option＋拖动转换都可以用了。"
-          : "已弹出系统提示：请在「辅助功能」列表里勾选 ClipBase（若之前有旧条目先移除再勾选）。",
+          : "已弹出系统提示：请在「辅助功能」列表里勾选 Halo（若之前有旧条目先移除再勾选）。",
       );
     } catch (e) {
       setMessage(`请求辅助功能权限失败：${errorMessage(e)}`);
@@ -106,7 +106,7 @@ export default function PermissionCenter() {
       setFinder(next.supported ? (next.enabled ? "granted" : "missing") : "unsupported");
       setMessage(
         next.enabled
-          ? "Finder 扩展已启用，右键菜单里会直接出现 ClipBase。"
+          ? "Finder 扩展已启用，右键菜单里会直接出现 Halo。"
           : "Finder 扩展已停用。",
       );
     } catch (e) {
@@ -195,7 +195,7 @@ export default function PermissionCenter() {
                 ? "已启用：Finder 右键直接出现「新建文件 / 在终端中打开」"
                 : finderInfo?.supported && finderInfo.appex_present === false
                   ? "当前是开发构建，App 内没有 Finder 扩展；打包后会随 App 一起安装"
-                  : "未启用时右键菜单里看不到 ClipBase 的动作"
+                  : "未启用时右键菜单里看不到 Halo 的动作"
             }
           >
             <Status
@@ -230,12 +230,12 @@ export default function PermissionCenter() {
 
       <p className="text-[12px]/[16px] text-white/45">
         系统会缓存辅助功能授权状态：在系统设置里勾选后回到本页点「刷新」即可，
-        无需重启 App；若仍未生效，可退出并重新打开 ClipBase。
+        无需重启 App；若仍未生效，可退出并重新打开 Halo。
       </p>
       <p className="text-[12px]/[16px] text-white/45">
         本地重新打包会重签名 App，macOS 会把授权当成「另一个程序」：列表里可能还
         留着旧条目但不再生效。遇到「之前能用、重打包后失灵」时，先在列表里用减号
-        移除 ClipBase，再点「请求授权」重新加入。
+        移除 Halo，再点「请求授权」重新加入。
       </p>
     </div>
   );

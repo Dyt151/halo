@@ -16,11 +16,13 @@
 //! - 载荷以**起手文件**为权威（`finder::file_at_point`），不再做松手复核，
 //!   也不要求用户再拖一次。
 //! - 选盘分两步：先用本批扩展名选一个 Profile，再算每个扇区是否可用（
-//!   §2.3）。不可用的预设**保留位置**并带原因，不重排其他扇区。
+//!   §2.3）。不可用的预设**不下发**：盘面只显示当前批次真正能执行的动作。
+//! - 文件夹也是合法载荷：没有可探格式，落兜底盘后只剩打包等工具动作。
 //! - 执行只用当次快照的路径与预设副本，配置后续变更不污染运行中的任务。
 
 pub mod profile;
 
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
@@ -85,7 +87,9 @@ fn now_ms() -> u64 {
 }
 
 fn session() -> Arc<Mutex<Session>> {
-    SESSION.get_or_init(|| Arc::new(Mutex::new(Session::default()))).clone()
+    SESSION
+        .get_or_init(|| Arc::new(Mutex::new(Session::default())))
+        .clone()
 }
 
 /// 保存状态机的原始数据；对外快照 [`RingSnapshot`] 由它派生。
@@ -202,7 +206,7 @@ pub struct RingSnapshot {
     pub hint: Option<String>,
     /// 本批文件选中的 Profile；没有 Profile 时为 `None`。
     pub profile: Option<ProfileInfo>,
-    /// 这张盘的扇区（位置固定，禁用项也在这里；末尾是工具动作）。
+    /// 这张盘的扇区（只含对当前批次可用的动作，禁用项已过滤）。
     pub actions: Vec<RingAction>,
     /// 按类别记住的最后动作：只用于初始高亮，不自动执行。
     pub suggested: Option<String>,
@@ -222,12 +226,12 @@ impl RingManager {
         APP.get().cloned()
     }
 
-    /// 起手文件：左键按下时指针下的 Finder 文件（真实拖放载荷的权威部分）。
+    /// 起手文件：左键按下时指针下的 Finder 文件或文件夹（真实拖放载荷的权威部分）。
     ///
     /// 必须在 `leftMouseDown` 的回调里同步调用：Finder 一进事件追踪循环就不再
     /// 响应 AX，读会阻塞到松手（实测 4.9s），整个拖动拿不到载荷。
     ///
-    /// 返回 `false` 表示可以**断言**这不是文件拖动（点在空白 / 工具栏 / 文件夹上）：
+    /// 返回 `false` 表示可以**断言**这不是文件拖动（点在空白 / 工具栏上）：
     /// 手势层应直接放弃本次接管，验收项「非文件拖动不显示圆环」。
     pub fn grab_start_file(x: f64, y: f64) -> bool {
         match finder::start_hit(x, y) {
@@ -294,12 +298,7 @@ impl RingManager {
         *DRAG_ORIGIN.lock_ok() = Some((x, y));
         *LAST_POINTER.lock_ok() = None;
         let paths = Self::drag_payload();
-        tracing::info!(
-            x,
-            y,
-            count = paths.len(),
-            "Option+拖动：环形盘钉在起手点"
-        );
+        tracing::info!(x, y, count = paths.len(), "Option+拖动：环形盘钉在起手点");
         Self::begin(app, paths);
     }
 
@@ -575,7 +574,10 @@ fn probe_and_ready(app: &AppHandle, generation: u64, paths: Vec<String>) {
         s.paths = paths;
     }
     let config = current_config();
-    let paths = session().lock().map(|s| s.paths.clone()).unwrap_or_default();
+    let paths = session()
+        .lock()
+        .map(|s| s.paths.clone())
+        .unwrap_or_default();
     if paths.is_empty() {
         // 手势层没拿到起手文件，也没有可用预取：直接说清楚，不要让盘空转。
         tracing::warn!(generation, "环形：拖动没有带来任何文件");
@@ -590,7 +592,7 @@ fn probe_and_ready(app: &AppHandle, generation: u64, paths: Vec<String>) {
     let mut snapshot = build_snapshot(generation, &State::Ready, &paths, &config);
 
     // 一个可执行扇区都没有 → 就地提示，不铺一张点了没反应的盘。
-    // 有可用扇区时，不可用的那些仍留在原位（只在扇区上标原因）。
+    // 快照里已经只含可用扇区，这里的判断与过滤后的盘面一致。
     let state = if snapshot.actions.iter().any(|a| a.enabled) {
         State::Ready
     } else {
@@ -605,20 +607,27 @@ fn probe_and_ready(app: &AppHandle, generation: u64, paths: Vec<String>) {
             return;
         }
         s.state = state;
-        s.profile = snapshot.profile.as_ref().map(|p| p.id.clone()).unwrap_or_default();
+        s.profile = snapshot
+            .profile
+            .as_ref()
+            .map(|p| p.id.clone())
+            .unwrap_or_default();
     }
 
     tracing::info!(
         generation,
         count = snapshot.count,
-        profile = snapshot.profile.as_ref().map(|p| p.id.as_str()).unwrap_or("-"),
+        profile = snapshot
+            .profile
+            .as_ref()
+            .map(|p| p.id.as_str())
+            .unwrap_or("-"),
         slices = snapshot.actions.len(),
         enabled = snapshot.actions.iter().filter(|a| a.enabled).count(),
         state = snapshot.state.as_str(),
         "环形盘就绪"
     );
-    show_ring_on_main(app);
-    let _ = app.emit(RING_UPDATE, &snapshot);
+    show_ring_on_main_with(app, snapshot);
 }
 
 /// 失败/空状态：记录状态 + 显示环形盘（用于就地提示，不打开主窗口）。
@@ -646,8 +655,7 @@ fn fail_state_with(app: &AppHandle, generation: u64, state: State, hint: Option<
         actions: Vec::new(),
         suggested: None,
     };
-    show_ring_on_main(app);
-    let _ = app.emit(RING_UPDATE, &snapshot);
+    show_ring_on_main_with(app, snapshot);
 }
 
 /// 提交被静默拦下（动作不可用 / 预设已删）：回 Idle 并给出具体原因。
@@ -676,15 +684,20 @@ fn abort_execute(app: &AppHandle, generation: u64, message: String) {
             output: None,
         },
     );
-    crate::core::services::notify("ClipBase 环形转换", &message);
+    crate::core::services::notify("Halo 环形转换", &message);
 }
 
-/// 把环形盘显示投递到主线程。
+/// 把环形盘显示投递到主线程，并在**显示之后**再推快照。
 ///
 /// AppKit 的窗口事务（show / setFrame / setLevel）必须在主线程，从后台线程
 /// 直接调会撞 `NSWMWindowCoordinator` 的 “transaction must be valid” 断言
 /// （进程直接 SIGTRAP）。探测线程与转换线程都不能自己动窗口。
-fn show_ring_on_main(app: &AppHandle) {
+///
+/// 快照必须跟在 show 后面：隐藏中的 WKWebView 会把入场动画（`opacity:0` +
+/// `fill-mode:both`）停在首帧，窗口显示后也不恢复——盘面就成了「看不见但点得到」，
+/// 松手照样按坐标命中扇区、文件照样被转走。之前在 show 之后单独 emit 是异步的，
+/// 事件可能先于窗口显示落地，这条竞态实机表现为「按了 Option 没看到环」。
+fn show_ring_on_main_with(app: &AppHandle, update: RingSnapshot) {
     let Some(origin) = *DRAG_ORIGIN.lock_ok() else {
         tracing::warn!("环形盘没有起手点，跳过显示");
         return;
@@ -692,6 +705,7 @@ fn show_ring_on_main(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         crate::window::show_ring_window(&handle, origin);
+        let _ = handle.emit(RING_UPDATE, &update);
     });
 }
 
@@ -706,16 +720,18 @@ fn hide_ring_on_main(app: &AppHandle) {
     });
 }
 
-/// 由路径 + 配置计算对外快照（类别、数量、选中 Profile、固定位置切片）。
-fn build_snapshot(generation: u64, state: &State, paths: &[String], config: &Config) -> RingSnapshot {
+/// 由路径 + 配置计算对外快照（类别、数量、选中 Profile、**只含可用的**扇区）。
+fn build_snapshot(
+    generation: u64,
+    state: &State,
+    paths: &[String],
+    config: &Config,
+) -> RingSnapshot {
     // 第一步：每个文件探格式（不认得的计入 skip，不能静默丢）。
     let per_file = detect_per_file(paths);
     let recognized = per_file.iter().filter(|f| f.is_some()).count();
-    let image = per_file
-        .iter()
-        .flatten()
-        .filter(|f| f.is_image())
-        .count();
+    let dirs = paths.iter().filter(|p| Path::new(p).is_dir()).count();
+    let image = per_file.iter().flatten().filter(|f| f.is_image()).count();
     let docs = per_file
         .iter()
         .flatten()
@@ -726,7 +742,10 @@ fn build_snapshot(generation: u64, state: &State, paths: &[String], config: &Con
 
     // 中心提示：同一源格式显示「数量 + 格式名」，同类混合显示类别名，
     // 跨类才叫「混合文件」——避免选了 20 张 PNG 还只写「图片」。
-    let category = if recognized == 0 {
+    // 纯文件夹批次没有格式可探，单独标「文件夹」。
+    let category = if recognized == 0 && dirs > 0 {
+        Some("文件夹".to_string())
+    } else if recognized == 0 {
         None
     } else if formats.iter().all(|f| Some(*f) == formats.first().copied()) {
         formats.first().map(|f| f.label().to_string())
@@ -741,8 +760,8 @@ fn build_snapshot(generation: u64, state: &State, paths: &[String], config: &Con
     };
 
     // 第二步：整批扩展名 → 唯一一个 Profile（§2.2）。
-    // 选盘与可用性是两个阶段：先拿到固定的 preset_ids 顺序，再逐个算能不能执行，
-    // 绝不因为不可用就从数组里删——否则设置里的位置与运行时的落点就是两回事。
+    // 选盘先拿到 preset_ids 的固定顺序，再逐个算能不能执行；不可用的扇区
+    // 在快照下发前统一过滤（`actions.retain`），盘面只呈现真正能点的动作。
     let extensions = profile::extensions_of(paths);
     let selected = profile::select_profile(&config.ring.profiles, &extensions);
     let (profile_info, ids) = match selected {
@@ -761,7 +780,7 @@ fn build_snapshot(generation: u64, state: &State, paths: &[String], config: &Con
         ),
         None => (None, Vec::new()),
     };
-    let actions = build_actions(&config.conversion.presets, &per_file, paths, &ids);
+    let mut actions = build_actions(&config.conversion.presets, &per_file, paths, &ids);
 
     // 记住的最后动作只用于预高亮，不自动执行；只能高亮真正可用的扇区。
     let suggested = if image > 0 && text == 0 && docs == 0 {
@@ -785,12 +804,13 @@ fn build_snapshot(generation: u64, state: &State, paths: &[String], config: &Con
 
     // 空状态的原因不止一种，提示不能一刀切：「没选中」曾被错用在「选中了但没有
     // 可转目标」上（比如只选了一个 .txt），用户会以为自己的选中丢了。
-    let hint = if recognized == 0 {
+    // 文件夹没有可探格式，不能算进「不是支持的格式」。
+    let hint = if recognized == 0 && dirs == 0 {
         if paths.is_empty() {
             Some("没有读到拖动的文件，按住 Option 从文件图标上开始拖动。".to_string())
         } else {
             Some(format!(
-                "选中的 {} 个文件都不是 ClipBase 支持的格式（图片 / 文档 / Markdown / HTML）。",
+                "选中的 {} 个文件都不是 Halo 支持的格式（图片 / 文档 / Markdown / HTML）。",
                 paths.len()
             ))
         }
@@ -814,11 +834,15 @@ fn build_snapshot(generation: u64, state: &State, paths: &[String], config: &Con
         None
     };
 
+    // 只下发真正可用的扇区：灰的（禁用的）不再占位置，前端按剩余数量重新均分。
+    // 执行端的第二道闸（action_slice）仍按完整列表校验，禁用项的拦截不受影响。
+    actions.retain(|a| a.enabled);
+
     RingSnapshot {
         generation,
         state: state.as_str().to_string(),
         category,
-        count: recognized,
+        count: recognized + dirs,
         hint,
         profile: profile_info,
         actions,
@@ -850,11 +874,14 @@ fn detect_per_file(paths: &[String]) -> Vec<Option<ConvertFormat>> {
         .collect()
 }
 
-/// 按 Profile 的固定顺序构建扇区：不可用的**保留位置**并带原因（§2.3）。
+/// 按 Profile 的固定顺序构建完整扇区列表（含禁用项与原因）。
 ///
 /// 格式预设的可用性走的是和 Job 同一套 `preset_availability`；打包 / 解压 /
 /// PDF 分页等工具动作按载荷本身判定（`action::availability`）。两条路径都和
 /// 执行端共用，不会再出现「扇区能点、执行时却无路由」的偏差。
+///
+/// 这里的禁用项仅供执行端闸门与内部判断；下发给前端前由 `build_snapshot`
+/// 过滤掉，盘面不呈现灰扇区。
 fn build_actions(
     presets: &[ConversionPreset],
     per_file: &[Option<ConvertFormat>],
@@ -1039,7 +1066,7 @@ fn notify_result(outcome: &RunOutcome) {
     } else {
         format!("{summary}\n{detail}")
     };
-    crate::core::services::notify("ClipBase 环形转换", &message);
+    crate::core::services::notify("Halo 环形转换", &message);
 }
 
 /// 读取当前配置（无 AppHandle 时的兜底：直接用状态里的 ConfigService）。
@@ -1061,7 +1088,11 @@ mod tests {
     }
 
     fn enabled_ids(actions: &[RingAction]) -> Vec<&str> {
-        actions.iter().filter(|a| a.enabled).map(|a| a.id.as_str()).collect()
+        actions
+            .iter()
+            .filter(|a| a.enabled)
+            .map(|a| a.id.as_str())
+            .collect()
     }
 
     fn ready_config() -> Config {
@@ -1082,12 +1113,24 @@ mod tests {
     #[test]
     fn txt_keeps_image_slices_but_disables_them() {
         let presets = preset::builtin_presets();
-        let actions = build_actions(&presets, &[Some(ConvertFormat::Txt)], &[], &old_mixed_layout());
+        let actions = build_actions(
+            &presets,
+            &[Some(ConvertFormat::Txt)],
+            &[],
+            &old_mixed_layout(),
+        );
 
-        assert_eq!(ids(&actions), vec!["img.jpg", "img.png", "doc.html", "doc.txt"]);
+        assert_eq!(
+            ids(&actions),
+            vec!["img.jpg", "img.png", "doc.html", "doc.txt"]
+        );
         assert_eq!(enabled_ids(&actions), vec!["doc.html"]);
         for action in actions.iter().filter(|a| !a.enabled) {
-            assert!(action.disabled_reason.is_some(), "{} 缺少禁用原因", action.id);
+            assert!(
+                action.disabled_reason.is_some(),
+                "{} 缺少禁用原因",
+                action.id
+            );
         }
         assert_eq!(actions[2].target.as_deref(), Some("html"));
     }
@@ -1096,7 +1139,12 @@ mod tests {
     #[test]
     fn png_disables_identity_preset_in_place() {
         let presets = preset::builtin_presets();
-        let actions = build_actions(&presets, &[Some(ConvertFormat::Png)], &[], &old_mixed_layout());
+        let actions = build_actions(
+            &presets,
+            &[Some(ConvertFormat::Png)],
+            &[],
+            &old_mixed_layout(),
+        );
 
         assert_eq!(ids(&actions)[1], "img.png");
         assert!(!actions[1].enabled, "同格式且未声明重编码，应禁用");
@@ -1121,21 +1169,31 @@ mod tests {
     #[test]
     fn missing_preset_drops_its_slice() {
         let presets = preset::builtin_presets();
-        let actions = build_actions(&presets, &[Some(ConvertFormat::Png)], &[], &["preset-gone".into()]);
+        let actions = build_actions(
+            &presets,
+            &[Some(ConvertFormat::Png)],
+            &[],
+            &["preset-gone".into()],
+        );
         assert!(actions.is_empty());
     }
 
-    /// 一批 .png → 选到「图片」Profile，扇区就是它的完整正面（工具动作关）。
+    /// 一批 .png → 选到「图片」Profile，只下发对 PNG 可用的扇区。
     #[test]
     fn snapshot_picks_image_profile_for_png() {
         let mut config = ready_config();
         config.ring.utility_actions = false;
         let snapshot = build_snapshot(1, &State::Ready, &["/tmp/a.png".to_string()], &config);
 
-        assert_eq!(snapshot.profile.as_ref().map(|p| p.id.as_str()), Some("images"));
+        assert_eq!(
+            snapshot.profile.as_ref().map(|p| p.id.as_str()),
+            Some("images")
+        );
         assert_eq!(snapshot.category.as_deref(), Some("PNG"));
-        assert_eq!(ids(&snapshot.actions), preset::DEFAULT_IMAGES.to_vec());
-        assert!(enabled_ids(&snapshot.actions).contains(&"img.jpg"));
+        assert!(snapshot.actions.iter().all(|a| a.enabled));
+        let enabled = ids(&snapshot.actions);
+        assert!(enabled.contains(&"img.jpg"));
+        assert!(!enabled.contains(&"img.png"), "同格式禁用的扇区不应下发");
     }
 
     /// 文档格式走「文档」Profile（docx 不再落到 catch-all）。
@@ -1145,10 +1203,13 @@ mod tests {
         config.ring.utility_actions = false;
         let snapshot = build_snapshot(1, &State::Ready, &["/tmp/a.docx".to_string()], &config);
 
-        assert_eq!(snapshot.profile.as_ref().map(|p| p.id.as_str()), Some("docs"));
+        assert_eq!(
+            snapshot.profile.as_ref().map(|p| p.id.as_str()),
+            Some("docs")
+        );
         assert_eq!(snapshot.category.as_deref(), Some("DOCX"));
-        assert_eq!(ids(&snapshot.actions), preset::DEFAULT_DOCS.to_vec());
-        assert!(enabled_ids(&snapshot.actions).contains(&"doc.txt"));
+        assert!(snapshot.actions.iter().all(|a| a.enabled));
+        assert!(ids(&snapshot.actions).contains(&"doc.txt"));
     }
 
     /// 图片 + 文本混选 → 没有普通 Profile 能覆盖全部扩展名，落到 catch-all。
@@ -1158,11 +1219,19 @@ mod tests {
         let paths = vec!["/tmp/a.png".to_string(), "/tmp/b.txt".to_string()];
         let snapshot = build_snapshot(1, &State::Ready, &paths, &config);
 
-        assert_eq!(snapshot.profile.as_ref().map(|p| p.id.as_str()), Some("mixed"));
-        assert!(snapshot.profile.as_ref().map(|p| p.fallback).unwrap_or(false));
+        assert_eq!(
+            snapshot.profile.as_ref().map(|p| p.id.as_str()),
+            Some("mixed")
+        );
+        assert!(snapshot
+            .profile
+            .as_ref()
+            .map(|p| p.fallback)
+            .unwrap_or(false));
         assert_eq!(snapshot.count, 2);
-        // 混合盘同时含图片与文本预设，文本目标对图片禁用但不重排。
-        assert!(snapshot.actions.iter().any(|a| a.id == "doc.html" && a.enabled));
+        // 混合盘同时含图片与文本目标，但只下发两边都能用上的那些。
+        assert!(snapshot.actions.iter().all(|a| a.enabled));
+        assert!(ids(&snapshot.actions).contains(&"doc.html"));
     }
 
     /// 未知扩展名 → catch-all，不误入任何普通 Profile。
@@ -1171,9 +1240,13 @@ mod tests {
         let config = ready_config();
         let snapshot = build_snapshot(1, &State::Ready, &["/tmp/a.xyz".to_string()], &config);
 
-        assert_eq!(snapshot.profile.as_ref().map(|p| p.id.as_str()), Some("mixed"));
+        assert_eq!(
+            snapshot.profile.as_ref().map(|p| p.id.as_str()),
+            Some("mixed")
+        );
         assert_eq!(snapshot.count, 0);
         assert!(snapshot.hint.is_some());
+        assert!(snapshot.actions.iter().all(|a| a.enabled));
     }
 
     /// 工具动作固定追加在正面末尾；关闭开关后整组消失。
@@ -1181,31 +1254,71 @@ mod tests {
     fn utility_actions_appended_last_and_toggleable() {
         let config = ready_config();
         let snapshot = build_snapshot(1, &State::Ready, &["/tmp/a.png".to_string()], &config);
-        let n = preset::ACTION_BUILTIN_IDS.len();
-        let tail: Vec<&str> = snapshot
-            .actions
-            .iter()
-            .rev()
-            .take(n)
-            .rev()
-            .map(|a| a.id.as_str())
-            .collect();
-        assert_eq!(tail, preset::ACTION_BUILTIN_IDS.to_vec());
 
-        // PNG 能打包；没有压缩包输入 → 解压占位但禁用且带原因。
-        let zip = snapshot.actions.iter().find(|a| a.id == "act.pack.zip").expect("打包扇区");
-        assert!(zip.enabled);
-        let extract = snapshot
+        // PNG 能打包；解压 / PDF 分页对 PNG 不可用，不下发。
+        let zip = snapshot
             .actions
             .iter()
-            .find(|a| a.id == "act.extract")
-            .expect("解压扇区");
-        assert!(!extract.enabled);
-        assert!(extract.disabled_reason.is_some());
+            .find(|a| a.id == "act.pack.zip")
+            .expect("打包扇区");
+        assert!(zip.enabled);
+        assert!(snapshot.actions.iter().all(|a| a.enabled));
+        assert!(snapshot
+            .actions
+            .iter()
+            .all(|a| !a.id.starts_with("act.pdf")));
+        assert!(snapshot.actions.iter().all(|a| a.id != "act.extract"));
+
+        // 工具动作仍连续排在末尾。
+        let utility = snapshot
+            .actions
+            .iter()
+            .filter(|a| a.id.starts_with("act."))
+            .count();
+        assert!(
+            snapshot
+                .actions
+                .iter()
+                .rev()
+                .take(utility)
+                .all(|a| a.id.starts_with("act.")),
+            "工具动作必须排在正面末尾"
+        );
 
         let mut off = ready_config();
         off.ring.utility_actions = false;
         let plain = build_snapshot(1, &State::Ready, &["/tmp/a.png".to_string()], &off);
         assert!(plain.actions.iter().all(|a| !a.id.starts_with("act.")));
+    }
+
+    /// 纯文件夹批次：落兜底盘，转换预设全部不可用被滤掉，只剩打包动作。
+    #[test]
+    fn snapshot_for_folder_only_shows_pack_tools() {
+        let config = ready_config();
+        let dir = std::env::temp_dir().join(format!("halo-ring-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("创建临时文件夹");
+        let paths = vec![dir.to_string_lossy().to_string()];
+        let snapshot = build_snapshot(5, &State::Ready, &paths, &config);
+
+        assert_eq!(
+            snapshot.profile.as_ref().map(|p| p.id.as_str()),
+            Some("mixed")
+        );
+        assert_eq!(snapshot.category.as_deref(), Some("文件夹"));
+        assert_eq!(snapshot.count, 1);
+        assert!(
+            snapshot.hint.is_none(),
+            "文件夹批次不该提示「不是支持的格式」"
+        );
+        assert!(snapshot.actions.iter().all(|a| a.enabled));
+        assert!(
+            snapshot
+                .actions
+                .iter()
+                .all(|a| a.id.starts_with("act.pack")),
+            "{:?}",
+            ids(&snapshot.actions)
+        );
+        assert!(ids(&snapshot.actions).contains(&"act.pack.zip"));
     }
 }

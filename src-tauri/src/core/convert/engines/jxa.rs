@@ -15,7 +15,7 @@ use super::super::edge::ConvertError;
 fn script_dir() -> PathBuf {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     DIR.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("clipbase-jxa-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("halo-jxa-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         dir
     })

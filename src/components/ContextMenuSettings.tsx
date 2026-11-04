@@ -71,7 +71,7 @@ export default function ContextMenuSettings() {
       setMessage(
         trusted
           ? "辅助功能已授权，桌面右键会在几秒内自动生效。"
-          : "已弹出系统提示：请在「辅助功能」列表里勾选 ClipBase（若之前有旧条目，先移除再勾选），然后点「刷新状态」。",
+          : "已弹出系统提示：请在「辅助功能」列表里勾选 Halo（若之前有旧条目，先移除再勾选），然后点「刷新状态」。",
       );
     } catch (e) {
       setMessage(`请求辅助功能权限失败：${errorMessage(e)}`);
@@ -88,14 +88,14 @@ export default function ContextMenuSettings() {
       <CardGroup title="Finder 右键菜单">
         <p className="text-[13px]/[18px] text-white/60">
           启用 Finder 扩展后，<span className="font-medium text-white">Finder 窗口</span>
-          里右键，菜单会直接出现 ClipBase 的「新建文件」和「在终端中打开」，
+          里右键，菜单会直接出现 Halo 的「新建文件」和「在终端中打开」，
           不需要再进「服务」子菜单。选中文件夹时以该文件夹为目标，选中文件时以其所在文件夹为目标。
           环形转换不在右键菜单里：在 Finder 或桌面按住 Option 再左键拖动文件即可唤出（同样需要「辅助功能」权限）。
         </p>
         <p className="mt-[8px] text-[13px]/[18px] text-white/60">
           <span className="font-medium text-white">桌面空白处和桌面图标上</span>
-          的右键也会出现同一组 ClipBase 项：未授权「辅助功能」时，它们追加在 Finder
-          原生菜单底部；授权后由 ClipBase 接管，菜单换成自己的版本——空白处提供新建文件、
+          的右键也会出现同一组 Halo 项：未授权「辅助功能」时，它们追加在 Finder
+          原生菜单底部；授权后由 Halo 接管，菜单换成自己的版本——空白处提供新建文件、
           新建文件夹、终端、粘贴和桌面背景，右键图标还会提供打开、显示简介和移到废纸篓，
           并保留「显示 Finder 菜单」随时退回系统菜单。
         </p>
@@ -176,9 +176,9 @@ export default function ContextMenuSettings() {
         {accessibility === false && enabled && (
           <div className="mt-[12px]">
             <Notice tone="info">
-              未授权「辅助功能」时，桌面右键仍会出现 ClipBase 项，但用的是 Finder 原生菜单；
-              授权后会换成 ClipBase 自己的菜单，同时恢复 Option＋拖动的环形转换。
-              点上方「授予辅助功能」并在系统提示里勾选 ClipBase；授权后最多等 3 秒自动生效，不用重启。
+              未授权「辅助功能」时，桌面右键仍会出现 Halo 项，但用的是 Finder 原生菜单；
+              授权后会换成 Halo 自己的菜单，同时恢复 Option＋拖动的环形转换。
+              点上方「授予辅助功能」并在系统提示里勾选 Halo；授权后最多等 3 秒自动生效，不用重启。
               重新打包 App 后系统可能要求重新勾选一次。
             </Notice>
           </div>
@@ -195,7 +195,7 @@ export default function ContextMenuSettings() {
             <Notice tone="info">
               当前运行的是开发构建，App 内没有 Finder 扩展。请用
               <span className="mx-[4px] font-medium text-white">npm run tauri build</span>
-              生成完整的 ClipBase.app，再启动它。
+              生成完整的 Halo.app，再启动它。
             </Notice>
           </div>
         )}
@@ -218,7 +218,7 @@ export default function ContextMenuSettings() {
       <CardGroup title="如果右键菜单里看不到" subtitle="按顺序排查">
         <ol className="space-y-[6px] pl-[16px] text-[12px]/[18px] text-white/60">
           <li className="list-decimal">
-            确认当前运行的是打包后的 ClipBase.app（不是
+            确认当前运行的是打包后的 Halo.app（不是
             <span className="mx-[4px] font-mono text-white/75">tauri dev</span>
             的裸二进制），并点上方「启用扩展」。
           </li>
@@ -236,7 +236,7 @@ export default function ContextMenuSettings() {
             或在终端执行 <span className="font-mono text-white/75">killall Finder</span>。
           </li>
           <li className="list-decimal">
-            扩展只监视主目录、桌面和外接卷。系统目录（如 /usr）不会出现 ClipBase 菜单。
+            扩展只监视主目录、桌面和外接卷。系统目录（如 /usr）不会出现 Halo 菜单。
           </li>
         </ol>
       </CardGroup>

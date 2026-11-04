@@ -249,7 +249,7 @@ export default function Modules() {
         <CardGroup>
           <EmptyState
             title={loading ? "正在读取模块…" : "还没有安装任何模块"}
-            hint="ClipBase 本身不依赖模块，装不装都能正常使用。"
+            hint="Halo 本身不依赖模块，装不装都能正常使用。"
           />
         </CardGroup>
       ) : (
@@ -336,7 +336,7 @@ export default function Modules() {
                   <div className="mt-[8px]">
                     <Notice tone="danger">
                       模块进程异常退出。可先「停用」再「启用」重试；反复崩溃请查看
-                      {" "}<span className="font-mono">~/.clipbase/logs</span>。
+                      {" "}<span className="font-mono">~/.halo/logs</span>。
                     </Notice>
                   </div>
                 )}

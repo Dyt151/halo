@@ -3,7 +3,7 @@
 //! macOS：`NSWorkspace.sharedWorkspace` → `frontmostApplication` → 其 `icon`
 //! （NSImage）→ 经 `NSGraphicsContext` 绘制进 40x40 位图 → `NSBitmapImageRep`
 //! `representationUsingType:properties:`（PNG）写文件，输出到
-//! `~/.clipbase/icons/<安全文件名>.png`（同名复用，已存在不重复导出），返回绝对路径。
+//! `~/.halo/icons/<安全文件名>.png`（同名复用，已存在不重复导出），返回绝对路径。
 //! 其他平台：no-op（`source_app_icon` 字段留空）。
 //!
 //! 导出是尽力而为的旁路：任何一步失败都静默降级为 `None`，绝不影响入库主流程。

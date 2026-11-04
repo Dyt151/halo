@@ -7,7 +7,7 @@
 //!
 //! 安全约定与 `output.rs` 一致：
 //! 1. **候选路径 == 任一源路径时永不覆盖**（源文件保护优先于冲突策略）；
-//! 2. 文件型产物先写 `.<名字>.clipbase-<uuid>.tmp` 再 rename（原子提交）；
+//! 2. 文件型产物先写 `.<名字>.halo-<uuid>.tmp` 再 rename（原子提交）；
 //! 3. 目录型产物先在工作目录里建 staging，完成后再搬到位（失败不留半成品）；
 //! 4. Overwrite 策略下目录**合并**内容（绝不删除已存在的目标目录）。
 
@@ -63,16 +63,19 @@ pub fn run_pack(
     preset: &ConversionPreset,
     cancel: &CancelToken,
 ) -> Vec<ConversionFileResult> {
-    let mut results: Vec<ConversionFileResult> =
-        sources.iter().map(|s| ConversionFileResult::pending(s)).collect();
+    let mut results: Vec<ConversionFileResult> = sources
+        .iter()
+        .map(|s| ConversionFileResult::pending(s))
+        .collect();
     if sources.is_empty() {
         return results;
     }
     let archive = match preset.kind {
         PresetKind::Pack { archive } => archive,
         _ => {
-            results[0] =
-                results[0].clone().fail(ConvertError::unsupported("不是打包动作".to_string()));
+            results[0] = results[0]
+                .clone()
+                .fail(ConvertError::unsupported("不是打包动作".to_string()));
             return results;
         }
     };
@@ -88,11 +91,11 @@ pub fn run_pack(
     // 批次前置检查：一个源读不了，整批不开始（压缩包是整体产物）。
     for (index, source) in sources.iter().enumerate() {
         match std::fs::metadata(source) {
-            Ok(meta) if !meta.is_file() => {
+            Ok(meta) if !meta.is_file() && !meta.is_dir() => {
                 return abort_pack(
                     results,
                     index,
-                    ConvertError::io("不是普通文件（文件夹或特殊设备无法打包）"),
+                    ConvertError::io("不是普通文件或文件夹（特殊设备无法打包）"),
                 );
             }
             Ok(_) => {}
@@ -325,12 +328,17 @@ fn run_pdf_pages(
 }
 
 /// PDF → CBZ 漫画包（每页一张 PNG 打进 zip）。
-fn run_pdf_to_cbz(source: &str, preset: &ConversionPreset, work_dir: &Path) -> ConversionFileResult {
+fn run_pdf_to_cbz(
+    source: &str,
+    preset: &ConversionPreset,
+    work_dir: &Path,
+) -> ConversionFileResult {
     let mut result = ConversionFileResult::pending(source);
     if detect_format(source) != Some(ConvertFormat::Pdf) {
         return result.skip_with(SkipCode::UnknownFormat, "只有 PDF 支持转 CBZ");
     }
-    let (final_path, temp_path) = match reserve_file(Path::new(source), &preset.output, "cbz", &[]) {
+    let (final_path, temp_path) = match reserve_file(Path::new(source), &preset.output, "cbz", &[])
+    {
         Ok(pair) => pair,
         Err(ActionAllocError::Skipped(detail)) => {
             return result.skip_with(SkipCode::Conflict, detail);
@@ -462,7 +470,7 @@ fn reserve_file(
     }
 
     let temp = dir.join(format!(
-        ".{}.clipbase-{}.tmp",
+        ".{}.halo-{}.tmp",
         candidate
             .file_name()
             .and_then(|n| n.to_str())
@@ -475,7 +483,10 @@ fn reserve_file(
 /// 目录型动作产物（解压 / 分页）的分配：`<目录>/<文件名>`，重名按策略处理。
 ///
 /// Overwrite 不删除已有目录——解压/分页是**合并**内容（见模块头约定 4）。
-fn reserve_dir(source: &Path, rule: &super::preset::OutputRule) -> Result<PathBuf, ActionAllocError> {
+fn reserve_dir(
+    source: &Path,
+    rule: &super::preset::OutputRule,
+) -> Result<PathBuf, ActionAllocError> {
     let dir = rule.dir_or_source(source);
     std::fs::create_dir_all(&dir)
         .map_err(|e| ActionAllocError::Io(format!("创建输出目录失败：{e}")))?;
@@ -517,9 +528,9 @@ fn stem_of(path: &Path) -> String {
 fn staging_dir(base: &Path, tag: &str) -> PathBuf {
     for n in 0..10_000u32 {
         let candidate = base.join(if n == 0 {
-            format!("clipbase-{tag}-{}", std::process::id())
+            format!("halo-{tag}-{}", std::process::id())
         } else {
-            format!("clipbase-{tag}-{}-{n}", std::process::id())
+            format!("halo-{tag}-{}-{n}", std::process::id())
         });
         match std::fs::create_dir(&candidate) {
             Ok(()) => return candidate,
@@ -527,7 +538,7 @@ fn staging_dir(base: &Path, tag: &str) -> PathBuf {
         }
     }
     std::env::temp_dir().join(format!(
-        "clipbase-{tag}-{}-{}",
+        "halo-{tag}-{}-{}",
         std::process::id(),
         uuid::Uuid::new_v4()
     ))
@@ -605,10 +616,8 @@ mod tests {
     use crate::core::convert::preset::{ImageOptions, OutputRule, TargetSpec};
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "clipbase-action-{}-{name}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("halo-action-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create scratch");
         dir
@@ -638,10 +647,15 @@ mod tests {
         ];
         let results = run_pack(
             &sources,
-            &default_preset(PresetKind::Pack { archive: ArchiveFormat::Zip }),
+            &default_preset(PresetKind::Pack {
+                archive: ArchiveFormat::Zip,
+            }),
             &CancelToken::new(),
         );
-        assert!(results.iter().all(|r| r.state == FileState::Done), "{results:?}");
+        assert!(
+            results.iter().all(|r| r.state == FileState::Done),
+            "{results:?}"
+        );
         let out = &results[0].outputs[0];
         assert!(out.ends_with("a.zip"), "{out}");
         assert!(Path::new(out).exists());
@@ -650,10 +664,55 @@ mod tests {
         // 第二次跑：Rename 策略 → a (2).zip。
         let again = run_pack(
             &sources,
-            &default_preset(PresetKind::Pack { archive: ArchiveFormat::Zip }),
+            &default_preset(PresetKind::Pack {
+                archive: ArchiveFormat::Zip,
+            }),
             &CancelToken::new(),
         );
-        assert!(again[0].outputs[0].ends_with("a (2).zip"), "{:?}", again[0].outputs);
+        assert!(
+            again[0].outputs[0].ends_with("a (2).zip"),
+            "{:?}",
+            again[0].outputs
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pack_archives_a_folder_recursively() {
+        let dir = scratch("pack-folder");
+        let folder = dir.join("docs");
+        std::fs::create_dir_all(folder.join("sub")).unwrap();
+        std::fs::write(folder.join("a.txt"), b"aaa").unwrap();
+        std::fs::write(folder.join("sub/b.txt"), b"bbb").unwrap();
+        let sources = vec![folder.to_string_lossy().to_string()];
+        let results = run_pack(
+            &sources,
+            &default_preset(PresetKind::Pack {
+                archive: ArchiveFormat::Zip,
+            }),
+            &CancelToken::new(),
+        );
+        assert!(
+            results.iter().all(|r| r.state == FileState::Done),
+            "{results:?}"
+        );
+        let out = &results[0].outputs[0];
+        assert!(out.ends_with("docs.zip"), "{out}");
+
+        // 解包校验：目录层级与文件内容都要在。
+        let outdir = dir.join("out");
+        std::fs::create_dir_all(&outdir).unwrap();
+        let status = std::process::Command::new("unzip")
+            .arg("-q")
+            .arg(out)
+            .arg("-d")
+            .arg(&outdir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(outdir.join("docs/a.txt").exists());
+        assert!(outdir.join("docs/sub/b.txt").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -666,7 +725,9 @@ mod tests {
         let results = run_pack(
             &sources,
             &{
-                let mut p = default_preset(PresetKind::Pack { archive: ArchiveFormat::Zip });
+                let mut p = default_preset(PresetKind::Pack {
+                    archive: ArchiveFormat::Zip,
+                });
                 p.output.conflict = ConflictPolicy::Overwrite;
                 p
             },
@@ -689,7 +750,9 @@ mod tests {
         ];
         let results = run_pack(
             &sources,
-            &default_preset(PresetKind::Pack { archive: ArchiveFormat::Zip }),
+            &default_preset(PresetKind::Pack {
+                archive: ArchiveFormat::Zip,
+            }),
             &CancelToken::new(),
         );
         assert_eq!(results[0].state, FileState::Pending);
@@ -766,7 +829,9 @@ mod tests {
         let txt = dir.join("note.txt");
         std::fs::write(&txt, b"hi").unwrap();
         for kind in [
-            PresetKind::PdfPages { to: ConvertFormat::Png },
+            PresetKind::PdfPages {
+                to: ConvertFormat::Png,
+            },
             PresetKind::PdfToCbz,
         ] {
             let result = run_file_action(
@@ -795,13 +860,21 @@ mod tests {
         assert_eq!((ok, skip), (2, 1));
         assert!(reason.is_some());
 
-        let (ok, skip, reason) =
-            availability(&default_preset(PresetKind::Pack { archive: ArchiveFormat::Zip }), &paths);
+        let (ok, skip, reason) = availability(
+            &default_preset(PresetKind::Pack {
+                archive: ArchiveFormat::Zip,
+            }),
+            &paths,
+        );
         assert_eq!((ok, skip), (3, 0));
         assert!(reason.is_none());
 
-        let (ok, skip, reason) =
-            availability(&default_preset(PresetKind::PdfPages { to: ConvertFormat::Png }), &paths);
+        let (ok, skip, reason) = availability(
+            &default_preset(PresetKind::PdfPages {
+                to: ConvertFormat::Png,
+            }),
+            &paths,
+        );
         assert_eq!((ok, skip), (0, 3));
         assert!(reason.is_some());
 
@@ -810,10 +883,7 @@ mod tests {
 
     #[test]
     fn common_parent_finds_shared_prefix() {
-        let paths = vec![
-            "/tmp/x/a.txt".to_string(),
-            "/tmp/x/sub/b.txt".to_string(),
-        ];
+        let paths = vec!["/tmp/x/a.txt".to_string(), "/tmp/x/sub/b.txt".to_string()];
         assert_eq!(common_parent(&paths), PathBuf::from("/tmp/x"));
 
         let mixed = vec!["/tmp/a.txt".to_string(), "/Users/b.txt".to_string()];

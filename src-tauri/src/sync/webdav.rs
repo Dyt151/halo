@@ -157,8 +157,8 @@ mod tests {
     #[test]
     fn remote_file_rejects_traversal_and_urls() {
         // 正常文件名与子目录都可以。
-        assert!(valid_remote_file("clipbase-sync.json"));
-        assert!(valid_remote_file("clipbase/sync.json"));
+        assert!(valid_remote_file("halo-sync.json"));
+        assert!(valid_remote_file("halo/sync.json"));
         // 往上跳 / 绝对网址 / 空段都会把快照写到同步目录之外。
         assert!(!valid_remote_file("../evil.json"));
         assert!(!valid_remote_file("a/../../b.json"));

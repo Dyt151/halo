@@ -44,11 +44,10 @@ pub fn list_tags(state: State<'_, AppState>) -> CommandResult<Vec<String>> {
     state.history.tags()
 }
 
-/// 退出 ClipBase。
+/// 退出 Halo。
 ///
-/// 去掉菜单栏图标后，App 没有任何 Dock 图标／托盘项，只剩下快捷键唤出的
-/// 面板；虽然专注时的「ClipBase」App 菜单里还有 ⌘Q，但鼠标用户需要一个
-/// 看得见、点得到的退出入口，所以设置页「关于」里放了按钮指向这里。
+/// 菜单栏图标右键菜单里有「退出」，设置页「关于」也保留一个按钮指向这里，
+/// 保证不用键盘也能退出。
 #[tauri::command]
 pub fn quit_app(app: tauri::AppHandle) {
     // 先把面板收起来，再退进程：否则窗口与进程消失的时序不一致，
@@ -95,7 +94,7 @@ fn pick(app: &tauri::AppHandle, multiple: bool, dirs: bool) -> CommandResult<Vec
 
 #[cfg(target_os = "macos")]
 fn run_open_panel(multiple: bool, dirs: bool) -> Vec<String> {
-    use objc2::runtime::{Bool, AnyObject};
+    use objc2::runtime::{AnyObject, Bool};
     use objc2::{class, msg_send};
 
     unsafe {
@@ -192,7 +191,9 @@ pub fn set_login_item(state: State<'_, AppState>, enabled: bool) -> CommandResul
     {
         macos::sm_set(enabled)?;
         // 配置只是镜像，真实状态以系统为准（下次启动时会用系统值回写 UI）。
-        let _ = state.config.patch(serde_json::json!({ "launch_at_login": enabled }));
+        let _ = state
+            .config
+            .patch(serde_json::json!({ "launch_at_login": enabled }));
         Ok(login_item_status())
     }
     #[cfg(not(target_os = "macos"))]
@@ -204,7 +205,7 @@ pub fn set_login_item(state: State<'_, AppState>, enabled: bool) -> CommandResul
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use objc2::runtime::{Bool, AnyObject};
+    use objc2::runtime::{AnyObject, Bool};
     use objc2::{class, msg_send};
 
     use crate::error::{AppError, CommandResult};
@@ -250,7 +251,9 @@ mod macos {
                     if utf8.is_null() {
                         "登录项注册失败".to_string()
                     } else {
-                        std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned()
+                        std::ffi::CStr::from_ptr(utf8)
+                            .to_string_lossy()
+                            .into_owned()
                     }
                 };
                 return Err(AppError::with_details(9105, "登录项注册失败", message));

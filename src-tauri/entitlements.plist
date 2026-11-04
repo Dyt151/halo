@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  ClipBase entitlements。
+  Halo entitlements。
 
   关键：不包含 com.apple.security.app-sandbox。
   App Sandbox 下的应用无法响应 Finder 任意目录的 NSServices（既拿不到选中

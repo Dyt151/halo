@@ -1,19 +1,22 @@
 /**
  * 跨窗口导航与小工具。
  *
- * ClipBase 有两个窗口（面板 / 管理窗口），二者是独立的 webview。
+ * Halo 有两个窗口（面板 / 管理窗口），二者是独立的 webview。
  * 「打开管理窗口并落到某一页」由 Rust 侧统一处理：
  *   - 目标页存在 AppState（进程内唯一可信的共享点，两个 webview 不保证共享 localStorage）；
- *   - 同时广播 `clipbase://navigate` 事件给已挂载的主窗口。
+ *   - 同时广播 `halo://navigate` 事件给已挂载的主窗口。
  * 前端只负责调命令、消费待跳转页、订阅事件。
  */
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invokeCommand } from "./ipc";
+import type { InputSourceHint } from "./types";
 
 export const MAIN_WINDOW_LABEL = "main";
 export const PANEL_WINDOW_LABEL = "panel";
 export const RING_WINDOW_LABEL = "ring";
+export const TRAY_PANEL_WINDOW_LABEL = "traypanel";
+export const INPUT_HUD_WINDOW_LABEL = "imehud";
 
 /**
  * 主窗口的设置分区（评审任务 1–3：主窗口已精简为纯设置中心）。
@@ -28,6 +31,7 @@ export type MainPage =
   | "clipboard"
   | "ring"
   | "context-menu"
+  | "statusbar"
   | "sync"
   | "backup"
   | "permissions"
@@ -35,7 +39,7 @@ export type MainPage =
   | "history";
 
 /** 导航事件名：Rust → 主窗口。 */
-const NAVIGATE_EVENT = "clipbase://navigate";
+const NAVIGATE_EVENT = "halo://navigate";
 
 /** 当前窗口是否为剪贴板面板。 */
 export function isPanelWindow(): boolean {
@@ -45,6 +49,40 @@ export function isPanelWindow(): boolean {
 /** 当前窗口是否为环形转换盘。 */
 export function isRingWindow(): boolean {
   return getCurrentWebviewWindow().label === RING_WINDOW_LABEL;
+}
+
+/** 当前窗口是否为菜单栏图标下方的状态栏面板。 */
+export function isTrayPanelWindow(): boolean {
+  return getCurrentWebviewWindow().label === TRAY_PANEL_WINDOW_LABEL;
+}
+
+/** 当前窗口是否为输入法切换提示。 */
+export function isInputHudWindow(): boolean {
+  return getCurrentWebviewWindow().label === INPUT_HUD_WINDOW_LABEL;
+}
+
+/**
+ * 订阅「输入法已切换」事件（Rust 收到系统的分布式通知后，先显示 HUD 再发）。
+ *
+ * HUD 窗口是 hide 而非销毁，React 只挂载一次，动画完全由这个事件驱动。
+ */
+export async function onInputSourceChanged(handler: (hint: InputSourceHint) => void): Promise<() => void> {
+  return listen<InputSourceHint>("halo://input-source-changed", (e) => handler(e.payload));
+}
+
+/**
+ * 订阅「状态栏面板已显示」事件（Rust 在 show 后发出）。
+ *
+ * 面板窗口是 hide 而非销毁，React 只挂载一次；不监听这个事件的话，
+ * 每次弹出看到的是上次的旧音量/旧输入法。
+ */
+export async function onTrayShown(handler: () => void): Promise<() => void> {
+  return listen("halo://tray-shown", () => handler());
+}
+
+/** 订阅「状态栏面板已收起」事件（音量轮询等可见期间的后台任务据此停机）。 */
+export async function onTrayHidden(handler: () => void): Promise<() => void> {
+  return listen("halo://tray-hidden", () => handler());
 }
 
 /** 打开管理窗口，可指定落到哪一页。 */
@@ -106,5 +144,5 @@ export function takeSettingsTab(): string | null {
  * React 只挂载一次，不监听这个事件的话动画只在冷启动播一遍。
  */
 export async function onPanelShown(handler: () => void): Promise<() => void> {
-  return listen("clipbase://panel-shown", () => handler());
+  return listen("halo://panel-shown", () => handler());
 }

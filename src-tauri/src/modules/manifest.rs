@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, CommandResult};
 
-/// 模块唯一标识（反域名格式，如 `com.clipbase.filee`）。
+/// 模块唯一标识（反域名格式，如 `com.halo.filee`）。
 pub type ModuleId = String;
 
 /// 模块运行时级别。
@@ -51,9 +51,9 @@ pub enum Lifecycle {
 pub enum Contribution {
     /// 菜单栏贡献。
     ///
-    /// 只保留解析：ClipBase 已取消菜单栏图标（纯后台 + 快捷键唤出面板），
-    /// 这类贡献现在不会渲染到任何地方。保留变体是为了不把旧模块清单一律
-    /// 判成非法——模块仍可安装、其它贡献点照常生效。
+    /// 只保留解析：Halo 的菜单栏图标是内置的状态栏面板，不接受模块
+    /// 注入菜单项。保留变体是为了不把旧模块清单一律判成非法——模块仍可
+    /// 安装、其它贡献点照常生效。
     Tray {
         label: String,
         #[serde(default)]
@@ -98,7 +98,7 @@ pub const MANIFEST_SCHEMA: u32 = 1;
 
 /// 模块 ID 是否可以直接当作 `modules/<id>/` 的目录名。
 ///
-/// 反域名格式（`com.clipbase.filee`），只允许 ASCII 字母数字与 `-` `_` `.`，
+/// 反域名格式（`com.halo.filee`），只允许 ASCII 字母数字与 `-` `_` `.`，
 /// 不得以 `.` 开头、不得包含 `..`。这条校验是**安全边界**而不是整洁癖：
 /// `install` 会先 `remove_dir_all(modules_dir.join(id))` 再复制，清单里写
 /// `id: "../../Documents"` 就会删掉模块目录之外的内容；同理 `uninstall`
@@ -203,15 +203,17 @@ struct RawContribution {
 
 /// 从 JSON 文本解析并校验 module.json。
 pub fn parse_manifest(json: &str) -> CommandResult<ModuleManifest> {
-    let raw: RawManifest = serde_json::from_str(json)
-        .map_err(|e| AppError::with_details(4001, "模块清单（module.json）格式不正确", e.to_string()))?;
+    let raw: RawManifest = serde_json::from_str(json).map_err(|e| {
+        AppError::with_details(4001, "模块清单（module.json）格式不正确", e.to_string())
+    })?;
     validate_raw(&raw)
 }
 
 /// 从文件路径读取并解析 module.json。
 pub fn load_manifest(path: &Path) -> CommandResult<ModuleManifest> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| AppError::with_details(4001, "读取模块清单（module.json）失败", e.to_string()))?;
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        AppError::with_details(4001, "读取模块清单（module.json）失败", e.to_string())
+    })?;
     parse_manifest(&content)
 }
 
@@ -230,7 +232,7 @@ fn validate_raw(raw: &RawManifest) -> CommandResult<ModuleManifest> {
             4001,
             "模块 ID 不合法",
             format!(
-                "需要反域名形式（如 com.clipbase.foo），只能用字母、数字与 - _ .，且不能以 . 开头：'{}'",
+                "需要反域名形式（如 com.halo.foo），只能用字母、数字与 - _ .，且不能以 . 开头：'{}'",
                 raw.id
             ),
         ));
@@ -273,10 +275,7 @@ fn validate_raw(raw: &RawManifest) -> CommandResult<ModuleManifest> {
 
     // sidecar 必须提供后端入口。
     if runtime == ModuleRuntime::Sidecar && raw.entry.backend.as_deref().unwrap_or("").is_empty() {
-        return Err(AppError::new(
-            4001,
-            "sidecar 模块必须声明 entry.backend",
-        ));
+        return Err(AppError::new(4001, "sidecar 模块必须声明 entry.backend"));
     }
 
     let mut permissions = Vec::new();
@@ -348,7 +347,13 @@ mod tests {
     #[test]
     fn contribution_tags_round_trip_as_snake_case() {
         let cases = [
-            (Contribution::Tray { label: "a".into(), icon: None }, "tray"),
+            (
+                Contribution::Tray {
+                    label: "a".into(),
+                    icon: None,
+                },
+                "tray",
+            ),
             (
                 Contribution::ClipboardAction {
                     label: "b".into(),

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  ClipBase 的 macOS 静态 Info.plist。
+  Halo 的 macOS 静态 Info.plist。
 
   Finder 右键菜单不再使用 NSServices（那只能出现在「服务」子菜单）。菜单由
-  Contents/PlugIns/ClipBaseFinderExtension.appex 提供，见 src-tauri/finder-extension。
+  Contents/PlugIns/HaloFinderExtension.appex 提供，见 src-tauri/finder-extension。
 
-  CFBundleURLTypes 注册 clipbase-finder://，用途是让沙盒里的扩展在投递请求后
+  CFBundleURLTypes 注册 halo-finder://，用途是让沙盒里的扩展在投递请求后
   唤醒主程序；主程序本身通过轮询队列执行动作，不依赖 URL 携带参数。
 -->
 <plist version="1.0">
@@ -15,15 +15,35 @@
     <array>
         <dict>
             <key>CFBundleURLName</key>
-            <string>com.clipbase.app.finder</string>
+            <string>com.halo.desktop.finder</string>
             <key>CFBundleURLSchemes</key>
             <array>
-                <string>clipbase-finder</string>
+                <string>halo-finder</string>
             </array>
         </dict>
     </array>
     <key>NSAppleEventsUsageDescription</key>
-    <string>ClipBase 需要 AppleScript：在 Terminal 中进入所选目录，以及读取 Finder 当前选中的文件以提供环形转换。</string>
+    <string>Halo 需要 AppleScript：在 Terminal 中进入所选目录，以及读取 Finder 当前选中的文件以提供环形转换。</string>
+    <!--
+      macOS 14.4+ 把当前 Wi-Fi 名称（SSID）列为定位权限保护的数据。不授权时
+      面板仍能显示「已连接 / IP」，只是看不到网络名。
+
+      这三条的中文文案逐字照抄正版，且同时存在于
+      resources/zh-Hans.lproj/InfoPlist.strings——那个 lproj 目录才是让 TIS
+      返回中文输入法名的关键，这里只是未本地化时的回退值。
+    -->
+    <key>NSLocationUsageDescription</key>
+    <string>用于在弹出窗口中显示当前 Wi-Fi 名称，并在打开 Wi-Fi 详情时读取网络名称、扫描结果和连接信息。</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>用于在弹出窗口中显示当前 Wi-Fi 名称，并在打开 Wi-Fi 详情时读取网络名称、扫描结果和连接信息。</string>
+    <!--
+      读写蓝牙控制器电源状态会触发 TCC 校验；缺少这条 key 时进程会被
+      直接 SIGABRT（__TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__）。
+    -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>用于显示蓝牙连接状态，为附近有名称的设备及此 Mac 已信任的设备读取电量/型号信息，并在支持的耳机上切换降噪模式；附近读取仅使用你明确授权的 BLE UUID。</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>用于在状态栏面板显示并切换蓝牙开关。</string>
     <!--
       纯菜单栏 App（评审 M5）：剪贴板工具常驻后台，不应在 Dock 里留一个图标，
       也不应在启动时把用户从当前工作抢走。置 LSUIElement 后进程以

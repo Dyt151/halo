@@ -2,7 +2,7 @@
 //!
 //! 导出的「包」是一个目录：
 //! ```text
-//! clipbase-export-<ms>/
+//! halo-export-<ms>/
 //!   backup.json   全部历史（ClipItem 全字段）+ 配置
 //!   files/        内容寻址的图片（include_files=true 时）
 //!   icons/        来源 App 图标（尽力复制）
@@ -114,7 +114,7 @@ pub fn export_data(input: ExportInput, state: State<'_, AppState>) -> CommandRes
     let config = serde_json::to_value(state.config.get())
         .map_err(|e| AppError::with_details(2003, "序列化配置失败", e.to_string()))?;
 
-    let bundle = dest.join(format!("clipbase-export-{}", now_ms()));
+    let bundle = dest.join(format!("halo-export-{}", now_ms()));
     std::fs::create_dir_all(&bundle)
         .map_err(|e| AppError::with_details(2003, "创建导出目录失败", e.to_string()))?;
 

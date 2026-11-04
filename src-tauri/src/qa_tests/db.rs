@@ -9,7 +9,7 @@ static TEMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 
 fn temp_db_path() -> std::path::PathBuf {
     let unique = format!(
-        "clipbase_test_{}_{}_{}",
+        "halo_test_{}_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -17,7 +17,7 @@ fn temp_db_path() -> std::path::PathBuf {
             .as_nanos(),
         TEMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
-    std::env::temp_dir().join(unique).join("data").join("clipbase.db")
+    std::env::temp_dir().join(unique).join("data").join("halo.db")
 }
 
 #[test]

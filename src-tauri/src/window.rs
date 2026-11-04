@@ -1,6 +1,6 @@
 //! 面板窗口 / 主窗口的显示、隐藏与定位。
 //!
-//! ClipBase 有两个窗口，职责严格分离（与 iCopy 等原生剪贴板工具一致）：
+//! Halo 有两个窗口，职责严格分离（与 iCopy 等原生剪贴板工具一致）：
 //! - `panel`：快捷键唤出的**剪贴板面板**，无边框、贴底停靠（或跟随光标），
 //!   只承载历史卡片流；失焦即隐藏。
 //! - `main`：**管理窗口**（设置/历史/环形转换/模块），从面板入口打开，
@@ -14,7 +14,8 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Monitor, Position, Size, WebviewWindow,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Monitor, Position, Size,
+    WebviewWindow,
 };
 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
 
@@ -140,7 +141,7 @@ pub fn show_main_window_with_page(app: &AppHandle, page: Option<String>) {
             *slot = Some(p.clone());
         }
         // 通知已挂载的主窗口立即导航；未挂载时由 consume 路径兜底。
-        let _ = app.emit("clipbase://navigate", p);
+        let _ = app.emit("halo://navigate", p);
     }
     show_main_window(app);
 }
@@ -250,9 +251,9 @@ pub fn show_panel_window(app: &AppHandle) {
 
     // 捕获「唤出面板前」的前台 App，回贴时把焦点还给它（对标 iCopy 的
     // `preActiveApp` + `activateWithOptions:`）。必须在此刻（set_focus 之前）取，
-    // 否则取到的是 ClipBase 自己，⌘V 会贴进面板而不是用户正在用的 App。
+    // 否则取到的是 Halo 自己，⌘V 会贴进面板而不是用户正在用的 App。
     //
-    // 走 `remember_frontmost_app` 而不是无条件写入：前台可能就是 ClipBase
+    // 走 `remember_frontmost_app` 而不是无条件写入：前台可能就是 Halo
     //（管理窗口开着时按快捷键），那样 ⌘V 会贴回自己的搜索框，还会把「上一个
     // 真实目标 App」的 pid 冲掉。
     remember_frontmost_app();
@@ -286,7 +287,7 @@ pub fn show_panel_window(app: &AppHandle) {
     }
 
     // 通知前端「面板已出现」：重放出现动画、复位滚动与选中态。
-    let _ = app.emit("clipbase://panel-shown", ());
+    let _ = app.emit("halo://panel-shown", ());
 }
 
 /// 记录「唤出面板前」前台 App 的 pid（回贴后归还焦点用）。
@@ -611,6 +612,263 @@ pub fn handle_panel_focus_gained() {
 }
 
 /* ------------------------------------------------------------------ */
+/* 菜单栏图标 / 下拉面板（traypanel）                                  */
+/* ------------------------------------------------------------------ */
+
+/// 托盘图标的屏幕矩形（物理像素，来自 Tauri 的 `TrayIconEvent::Click`）。
+static TRAY_ICON_RECT: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
+/// 面板刚显示的时间：宽限期内忽略系统补发的失焦事件。
+static TRAY_PANEL_SHOWN_AT_MS: AtomicU64 = AtomicU64::new(0);
+static TRAY_PANEL_FOCUSED: AtomicBool = AtomicBool::new(false);
+/// 最近一次收起的时间：点击图标时「先失焦收起、再收到点击」不能又弹开。
+static TRAY_PANEL_HIDDEN_AT_MS: AtomicU64 = AtomicU64::new(0);
+/// 面板内容高度（逻辑像素，由前端回报）。
+static TRAY_PANEL_HEIGHT: AtomicU64 = AtomicU64::new(360);
+
+/// 与 Status Trio 面板一致：内容 330 宽（左右各 14 内边距）。
+const TRAY_PANEL_WIDTH: f64 = 330.0;
+const TRAY_PANEL_GAP: f64 = 6.0;
+/// 面板与屏幕边缘的最小间距。
+const TRAY_PANEL_MARGIN: f64 = 8.0;
+/// 超过这个高度由前端自己滚动，窗口不再长高。
+const TRAY_PANEL_MAX_HEIGHT: f64 = 720.0;
+
+/// 记录托盘图标矩形（物理像素）。
+pub fn set_tray_icon_rect(x: f64, y: f64, width: f64, height: f64) {
+    *TRAY_ICON_RECT.lock_ok() = Some((x, y, width, height));
+}
+
+/// 把托盘的物理矩形换算成逻辑坐标（找到图标所在的那块屏再除以缩放比）。
+fn tray_icon_logical(window: &WebviewWindow) -> Option<(f64, f64, f64, f64)> {
+    let (x, y, w, h) = (*TRAY_ICON_RECT.lock_ok())?;
+    let monitor = window
+        .available_monitors()
+        .ok()?
+        .into_iter()
+        .find(|m| {
+            let pos = m.position();
+            let size = m.size();
+            let left = pos.x as f64;
+            let top = pos.y as f64;
+            x >= left && x < left + size.width as f64 && y >= top && y < top + size.height as f64
+        })
+        .or_else(|| window.current_monitor().ok().flatten())
+        .or_else(|| window.primary_monitor().ok().flatten())?;
+    let scale = monitor.scale_factor().max(1.0);
+    Some((x / scale, y / scale, w / scale, h / scale))
+}
+
+/// 把面板贴到图标正下方（右对齐图标），并 clamp 进工作区。
+fn place_tray_panel(window: &WebviewWindow, height: f64) {
+    // 拿不到托盘矩形（例如用快捷键打开）时退回光标位置，至少不留在旧屏。
+    let Some((ax, ay, aw, ah)) = tray_icon_logical(window)
+        .or_else(|| cursor_logical_position(window).map(|(x, y)| (x, y, 0.0, 0.0)))
+    else {
+        return;
+    };
+    let Some(monitor) = monitor_containing(window, (ax, ay))
+        .or_else(|| window.current_monitor().ok().flatten())
+        .or_else(|| window.primary_monitor().ok().flatten())
+    else {
+        return;
+    };
+    let scale = monitor.scale_factor().max(1.0);
+    let work = monitor.work_area();
+    let origin_x = work.position.x as f64 / scale;
+    let origin_y = work.position.y as f64 / scale;
+    let avail_w = work.size.width as f64 / scale;
+    let avail_h = work.size.height as f64 / scale;
+
+    let width = TRAY_PANEL_WIDTH
+        .min(avail_w - TRAY_PANEL_MARGIN * 2.0)
+        .max(240.0);
+    let height = height
+        .clamp(120.0, TRAY_PANEL_MAX_HEIGHT)
+        .min((avail_h - TRAY_PANEL_MARGIN * 2.0).max(120.0));
+
+    let max_x = (origin_x + avail_w - width - TRAY_PANEL_MARGIN).max(origin_x + TRAY_PANEL_MARGIN);
+    let x = (ax + aw - width).clamp(origin_x + TRAY_PANEL_MARGIN, max_x);
+    let max_y = (origin_y + avail_h - height - TRAY_PANEL_MARGIN).max(origin_y + TRAY_PANEL_MARGIN);
+    let y = (ay + ah + TRAY_PANEL_GAP).clamp(origin_y + TRAY_PANEL_MARGIN, max_y);
+
+    let _ = window.set_size(Size::Logical(LogicalSize::new(width, height)));
+    let _ = window.set_position(Position::Logical(LogicalPosition::new(x, y)));
+}
+
+/// 显示状态栏面板（点菜单栏图标）。
+pub fn show_tray_panel(app: &AppHandle) {
+    let Some(panel) = app.get_webview_window("traypanel") else {
+        return;
+    };
+    place_tray_panel(&panel, TRAY_PANEL_HEIGHT.load(Ordering::SeqCst) as f64);
+
+    TRAY_PANEL_SHOWN_AT_MS.store(now_ms(), Ordering::SeqCst);
+    TRAY_PANEL_FOCUSED.store(false, Ordering::SeqCst);
+    // 与剪贴板面板同层级：盖过其它 App 的浮层；全屏 Space 里也能出来。
+    #[cfg(target_os = "macos")]
+    set_window_level(&panel, 25);
+    allow_over_fullscreen(&panel);
+    // Accessory 应用不主动激活就拿不到键盘（Esc 与滑条都需要）。
+    activate_app();
+    let _ = panel.show();
+    let _ = panel.set_focus();
+    refresh_shadow(&panel);
+
+    let _ = app.emit("halo://tray-shown", ());
+}
+
+/// 收起状态栏面板。
+pub fn hide_tray_panel(app: &AppHandle) {
+    if let Some(panel) = app.get_webview_window("traypanel") {
+        TRAY_PANEL_FOCUSED.store(false, Ordering::SeqCst);
+        let _ = panel.hide();
+        TRAY_PANEL_HIDDEN_AT_MS.store(now_ms(), Ordering::SeqCst);
+        let _ = app.emit("halo://tray-hidden", ());
+    }
+}
+
+/// 点击菜单栏图标：可见则收起，不可见则弹出。
+pub fn toggle_tray_panel(app: &AppHandle) {
+    let Some(panel) = app.get_webview_window("traypanel") else {
+        return;
+    };
+    if panel.is_visible().unwrap_or(false) {
+        hide_tray_panel(app);
+        return;
+    }
+    // 点图标时窗口会先失焦收起：这次点击的语义是「收起」，不能再弹开。
+    if now_ms().saturating_sub(TRAY_PANEL_HIDDEN_AT_MS.load(Ordering::SeqCst)) < 350 {
+        return;
+    }
+    show_tray_panel(app);
+}
+
+/// 面板失焦即收起（与剪贴板面板同一套宽限 + 复核逻辑）。
+pub fn handle_tray_panel_focus_lost(app: &AppHandle) {
+    let shown_at = TRAY_PANEL_SHOWN_AT_MS.load(Ordering::SeqCst);
+    if shown_at > 0 && now_ms().saturating_sub(shown_at) < FOCUS_GRACE_MS {
+        return;
+    }
+    if !TRAY_PANEL_FOCUSED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(panel) = app.get_webview_window("traypanel") {
+        if panel.is_focused().unwrap_or(false) {
+            TRAY_PANEL_FOCUSED.store(true, Ordering::SeqCst);
+            return;
+        }
+    }
+    hide_tray_panel(app);
+}
+
+pub fn handle_tray_panel_focus_gained() {
+    TRAY_PANEL_FOCUSED.store(true, Ordering::SeqCst);
+}
+
+/// 托盘图标的稳定 id（配置里关掉状态栏图标时按它找回来）。
+pub const TRAY_ICON_ID: &str = "halo-status";
+
+/// 配置里的「显示状态栏图标」落地：隐藏/显示托盘图标。
+pub fn apply_tray_visibility(app: &AppHandle, visible: bool) {
+    if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
+        let _ = tray.set_visible(visible);
+    }
+    if !visible {
+        hide_tray_panel(app);
+    }
+}
+
+/// 前端按实际内容高度回报：记下来，可见时立即重排。
+pub fn resize_tray_panel(app: &AppHandle, height: f64) {
+    let height = height.clamp(120.0, TRAY_PANEL_MAX_HEIGHT).round();
+    TRAY_PANEL_HEIGHT.store(height as u64, Ordering::SeqCst);
+    if let Some(panel) = app.get_webview_window("traypanel") {
+        if panel.is_visible().unwrap_or(false) {
+            place_tray_panel(&panel, height);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* 输入法切换 HUD                                                       */
+/* ------------------------------------------------------------------ */
+
+/// HUD 卡片窗口的标签。
+const INPUT_HUD_LABEL: &str = "imehud";
+/// 窗口尺寸（逻辑像素）：卡片由前端在窗口内居中绘制，宽度按最长的输入法名留足。
+const INPUT_HUD_WIDTH: f64 = 300.0;
+const INPUT_HUD_HEIGHT: f64 = 96.0;
+/// 卡片底边离工作区底部的距离：避开 Dock，也不挡正文最后一行。
+const INPUT_HUD_BOTTOM: f64 = 96.0;
+/// 一次提示的总时长：进场 200 + 停留 1100 + 出场 240，与前端动画的三段一致。
+const INPUT_HUD_TOTAL_MS: u64 = 200 + 1100 + 240;
+/// 第几次提示：连按切换时，上一次的收起任务要作废，否则会提前把新提示收掉。
+static INPUT_HUD_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// 弹出输入法 HUD：出现在光标所在屏的下方居中，**从不抢焦点**。
+///
+/// 与环形盘同一套不抢焦点的做法（`show()` + 鼠标穿透）：切换输入法这件事本身就
+/// 发生在用户正在打字的窗口里，HUD 一旦成为 key window，用户的输入就断了。
+pub fn show_input_source_hud(
+    app: &AppHandle,
+    hint: crate::core::statusbar::InputSourceHint,
+) {
+    let Some(hud) = app.get_webview_window(INPUT_HUD_LABEL) else {
+        tracing::warn!("输入法 HUD 窗口不存在");
+        return;
+    };
+    place_input_hud(&hud);
+    #[cfg(target_os = "macos")]
+    set_window_level(&hud, 25);
+    allow_over_fullscreen(&hud);
+    let _ = hud.set_ignore_cursor_events(true);
+    if let Err(error) = hud.show() {
+        tracing::warn!("显示输入法 HUD 失败: {error}");
+    }
+    // 先显示再发事件：隐藏中的 webview 会被节流，事件发早了动画就在看不见的地方播完了。
+    let _ = hud.emit("halo://input-source-changed", hint);
+
+    let generation = INPUT_HUD_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(INPUT_HUD_TOTAL_MS));
+        if INPUT_HUD_GENERATION.load(Ordering::SeqCst) == generation {
+            hide_input_source_hud(&app);
+        }
+    });
+}
+
+/// 收起输入法 HUD。
+pub fn hide_input_source_hud(app: &AppHandle) {
+    if let Some(hud) = app.get_webview_window(INPUT_HUD_LABEL) {
+        let _ = hud.hide();
+    }
+}
+
+/// HUD 定位：光标所在屏的工作区，水平居中、底部上浮。
+fn place_input_hud(hud: &WebviewWindow) {
+    let Some(monitor) = monitor_at_cursor(hud)
+        .or_else(|| hud.current_monitor().ok().flatten())
+        .or_else(|| hud.primary_monitor().ok().flatten())
+    else {
+        return;
+    };
+    let scale = monitor.scale_factor().max(1.0);
+    let work = monitor.work_area();
+    let origin_x = work.position.x as f64 / scale;
+    let origin_y = work.position.y as f64 / scale;
+    let avail_w = work.size.width as f64 / scale;
+    let avail_h = work.size.height as f64 / scale;
+    let width = INPUT_HUD_WIDTH.min((avail_w - FLOAT_MARGIN * 2.0).max(180.0));
+    let height = INPUT_HUD_HEIGHT.min((avail_h - FLOAT_MARGIN * 2.0).max(64.0));
+    let x = origin_x + (avail_w - width) / 2.0;
+    let y = origin_y + avail_h - height - INPUT_HUD_BOTTOM.min((avail_h - height - FLOAT_MARGIN).max(0.0));
+
+    let _ = hud.set_size(Size::Logical(LogicalSize::new(width, height)));
+    let _ = hud.set_position(Position::Logical(LogicalPosition::new(x, y)));
+}
+
+/* ------------------------------------------------------------------ */
 /* 环形转换盘 / 回复选择器（现场浮动面板）                              */
 /* ------------------------------------------------------------------ */
 
@@ -651,7 +909,7 @@ pub fn show_ring_window(app: &AppHandle, origin: (f64, f64)) {
         tracing::warn!("显示环形盘失败: {e}");
     }
     tracing::info!(x = cx, y = cy, "环形盘窗口已显示");
-    let _ = app.emit("clipbase://ring-shown", ());
+    let _ = app.emit("halo://ring-shown", ());
 }
 
 /// 隐藏环形转换盘。
@@ -712,8 +970,14 @@ pub fn place_float_window_at(
     // 以给定点为中心展开；越界时向工作区内 clamp（等价于边缘翻转/平移）。
     let raw_x = cx - w / 2.0;
     let raw_y = cy - h / 2.0;
-    let x = raw_x.clamp(origin_x + FLOAT_MARGIN, (origin_x + avail_w - w - FLOAT_MARGIN).max(origin_x + FLOAT_MARGIN));
-    let y = raw_y.clamp(origin_y + FLOAT_MARGIN, (origin_y + avail_h - h - FLOAT_MARGIN).max(origin_y + FLOAT_MARGIN));
+    let x = raw_x.clamp(
+        origin_x + FLOAT_MARGIN,
+        (origin_x + avail_w - w - FLOAT_MARGIN).max(origin_x + FLOAT_MARGIN),
+    );
+    let y = raw_y.clamp(
+        origin_y + FLOAT_MARGIN,
+        (origin_y + avail_h - h - FLOAT_MARGIN).max(origin_y + FLOAT_MARGIN),
+    );
 
     let _ = window.set_size(Size::Logical(LogicalSize::new(w, h)));
     let _ = window.set_position(Position::Logical(LogicalPosition::new(x, y)));
@@ -750,7 +1014,10 @@ pub fn restore_frontmost_app() {
         let options: usize = 1;
         let activated: Bool = msg_send![app, activateWithOptions: options];
         if !activated.as_bool() {
-            tracing::debug!(pid, "归还焦点失败：系统拒绝了本次 activate（目标 App 可能已退出）");
+            tracing::debug!(
+                pid,
+                "归还焦点失败：系统拒绝了本次 activate（目标 App 可能已退出）"
+            );
         }
     }
 }

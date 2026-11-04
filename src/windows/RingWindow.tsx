@@ -44,6 +44,13 @@ const CLOSE_STAGGER = 10;
 const CLOSE_MS = 300;
 /** 落在禁用扇区上时，原因停留多久再收起。 */
 const REJECT_HOLD = 1300;
+/**
+ * 入场动画最多演这么久，之后无条件摘掉动画类。
+ *
+ * 动画只是观感，不能挡住正确性：隐藏中的 WKWebView 会把 `opacity:0` 的入场帧
+ * 冻住，窗口显示后也可能不恢复，结果就是「环看不见、但松手仍按坐标命中扇区」。
+ */
+const STILL_AFTER_MS = 600;
 /** 指针位移小于它就不算「真的在拖动」（与宿主接管阈值一致，防误触）。 */
 const ARM_DISTANCE = 6;
 /**
@@ -62,7 +69,7 @@ const EV_UPDATE = "ring://update";
 const EV_PROGRESS = "ring://progress";
 const EV_RESULT = "ring://result";
 const EV_HANDOFF = "ring://handoff";
-const EV_SHOWN = "clipbase://ring-shown";
+const EV_SHOWN = "halo://ring-shown";
 /** 拖动中的指针位置与松手。 */
 const EV_POINTER = "ring://pointer";
 const EV_DRAG_END = "ring://drag-end";
@@ -117,8 +124,12 @@ export default function RingWindow() {
   const [rejected, setRejected] = useState<string | null>(null);
   /** 没有命中可用扇区：先播关闭动画再关窗，避免“凭空消失”（Wheel §1.3）。 */
   const [closing, setClosing] = useState(false);
+  /** 入场动画已放完（或页面不可见时直接置 true）：渲染不再挂动画类。 */
+  const [still, setStill] = useState(true);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
+  /** 入场动画容器：兜底逻辑要在定时器里读它的计算样式。 */
+  const layerRef = useRef<HTMLDivElement | null>(null);
   const resultSeenRef = useRef<number | null>(null);
   /**
    * 会话令牌：每应用一次新快照就自增。
@@ -134,6 +145,8 @@ export default function RingWindow() {
   const rejectTimerRef = useRef<number | null>(null);
   /** 关闭动画 → 真隐藏的定时器。 */
   const closeTimerRef = useRef<number | null>(null);
+  /** 入场动画兜底：到点摘掉动画类，保证盘面一定画出来。 */
+  const stillTimerRef = useRef<number | null>(null);
   /** 本次执行开始时间：进度环至少显示 0.6s。 */
   const startedRef = useRef(0);
   /** 拖起来的那一刻指针就在盘心：先忽略 hover，直到指针真的移动过，
@@ -181,6 +194,19 @@ export default function RingWindow() {
     setCollapsing(false);
     setRejected(null);
     setClosing(false);
+    // 页面不可见（窗口还没 show）时别演入场动画：动画会在隐藏的 webview 里
+    // 停在首帧，窗口显示后就变成一张全透明的盘。可见时正常演，并用定时器兜底：
+    // 到点检查容器透明度，仍然停在首帧就把动画类摘掉，强制落到最终状态。
+    const hidden = document.visibilityState !== "visible";
+    setStill(hidden);
+    clearTimer(stillTimerRef);
+    stillTimerRef.current = window.setTimeout(() => {
+      stillTimerRef.current = null;
+      const layer = layerRef.current;
+      const opacity = layer ? Number(window.getComputedStyle(layer).opacity) : 1;
+      // 动画正常放完时是 1；被冻住的会停在首帧（0.6）。
+      if (!(opacity > 0.95)) setStill(true);
+    }, STILL_AFTER_MS);
     // 新会话重新计数指针位移，避免沿用上一次的 hover 状态。
     armedRef.current = false;
     firstPosRef.current = null;
@@ -248,6 +274,7 @@ export default function RingWindow() {
       clearTimer(collapseTimerRef);
       clearTimer(rejectTimerRef);
       clearTimer(closeTimerRef);
+      clearTimer(stillTimerRef);
       void unshown.then((f) => f());
       void unupdate.then((f) => f());
       void unprogress.then((f) => f());
@@ -429,7 +456,8 @@ export default function RingWindow() {
     >
       {ready && !executing && (
         <div
-          className={`absolute inset-0 ${collapsing ? "ring-collapse" : handoff ? "ring-handoff" : closing ? "" : "ring-layer-in"}`}
+          ref={layerRef}
+          className={`absolute inset-0 ${collapsing ? "ring-collapse" : handoff ? "ring-handoff" : closing || still ? "" : "ring-layer-in"}`}
         >
           <svg
             width={SIZE}
@@ -459,7 +487,7 @@ export default function RingWindow() {
                   }}
                 >
                   <g
-                    className={closing ? "ring-sector-out" : "ring-sector-in"}
+                    className={closing ? "ring-sector-out" : still ? undefined : "ring-sector-in"}
                     style={{
                       animationDelay: `${closing ? s.closeDelay : s.delay}ms`,
                       /* 绕圆心缩放：Wheel §1.3「从中心缩放并带轻微旋转」。 */

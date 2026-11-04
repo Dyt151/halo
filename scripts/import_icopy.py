@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把 iCopy 的剪贴板历史 / 快捷回复提取成 ClipBase 可导入的 JSON。
+"""把 iCopy 的剪贴板历史 / 快捷回复提取成 Halo 可导入的 JSON。
 
 iCopy 的数据布局（逆向结论，见 docs/REA-iCopy-Filee.md §1.3）：
 
@@ -13,12 +13,12 @@ iCopy 的数据布局（逆向结论，见 docs/REA-iCopy-Filee.md §1.3）：
     需经 libcompression 解压后再解析
   - `filepath`：iCopy 容器内的图片/文件绝对路径
 
-本脚本只负责「读 iCopy + 解归档 + 复制图片文件」，写库由 ClipBase 侧
-`clipbase_import` 二进制完成（保证 hash / preview / 序列化与 App 内部完全一致）。
+本脚本只负责「读 iCopy + 解归档 + 复制图片文件」，写库由 Halo 侧
+`halo_import` 二进制完成（保证 hash / preview / 序列化与 App 内部完全一致）。
 快捷回复功能已下线，iCopy 的 `reply.sqlite` 不再迁移。
 
 用法：
-    python3 scripts/import_icopy.py            # 生成 ~/.clipbase/data/import/icopy.json
+    python3 scripts/import_icopy.py            # 生成 ~/.halo/data/import/icopy.json
     python3 scripts/import_icopy.py --dry-run  # 只统计不写文件
 """
 
@@ -38,9 +38,9 @@ from pathlib import Path
 ICOPY_CONTAINER = Path(
     "~/Library/Containers/cn.better365.iCopy/Data/Documents"
 ).expanduser()
-CLIPBASE_HOME = Path("~/.clipbase").expanduser()
-CLIPBASE_FILES = CLIPBASE_HOME / "data" / "files"
-CLIPBASE_IMPORT_DIR = CLIPBASE_HOME / "data" / "import"
+HALO_HOME = Path("~/.halo").expanduser()
+HALO_FILES = HALO_HOME / "data" / "files"
+HALO_IMPORT_DIR = HALO_HOME / "data" / "import"
 
 # 判定为「图片」的 UTI 前缀；其余 pastetype=2 视为文件列表。
 IMAGE_UTIS = {"public.png", "public.tiff", "public.jpeg", "com.compuserve.gif"}
@@ -217,12 +217,12 @@ def png_size(path: Path) -> tuple[int, int]:
 
 
 def copy_asset(src: Path, tag: str) -> Path | None:
-    """把 iCopy 容器里的图片/文件复制到 ClipBase 的 files 目录。"""
+    """把 iCopy 容器里的图片/文件复制到 Halo 的 files 目录。"""
     if not src or not src.is_file():
         return None
-    CLIPBASE_FILES.mkdir(parents=True, exist_ok=True)
+    HALO_FILES.mkdir(parents=True, exist_ok=True)
     suffix = src.suffix or ".bin"
-    dest = CLIPBASE_FILES / f"icopy_{tag}{suffix}"
+    dest = HALO_FILES / f"icopy_{tag}{suffix}"
     shutil.copy2(src, dest)
     return dest
 
@@ -280,7 +280,7 @@ def build_clips(dry_run: bool) -> tuple[list[dict], dict]:
                 if not dry_run:
                     dest = copy_asset(src, f"{rid}")
                 else:
-                    dest = CLIPBASE_FILES / f"icopy_{rid}{src.suffix or '.bin'}"
+                    dest = HALO_FILES / f"icopy_{rid}{src.suffix or '.bin'}"
                 if dest is None:
                     stats["skipped"] += 1
                     continue
@@ -312,13 +312,13 @@ def build_clips(dry_run: bool) -> tuple[list[dict], dict]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="从 iCopy 提取历史到 ClipBase 导入文件")
+    parser = argparse.ArgumentParser(description="从 iCopy 提取历史到 Halo 导入文件")
     parser.add_argument("--dry-run", action="store_true", help="只统计，不写文件")
     args = parser.parse_args()
 
     clips, stats = build_clips(args.dry_run)
 
-    print("iCopy → ClipBase 提取结果")
+    print("iCopy → Halo 提取结果")
     print(f"  纯文本 : {stats['text']}")
     print(f"  富文本 : {stats['html']}")
     print(f"  RTF回落: {stats['rtf']}")
@@ -330,13 +330,13 @@ def main() -> int:
     if args.dry_run:
         return 0
 
-    CLIPBASE_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
-    out = CLIPBASE_IMPORT_DIR / "icopy.json"
+    HALO_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    out = HALO_IMPORT_DIR / "icopy.json"
     with out.open("w", encoding="utf-8") as f:
         json.dump({"clips": clips}, f, ensure_ascii=False)
     print(f"\n已写入 {out}")
-    print("下一步执行：cargo run --bin clipbase_import -- "
-          f"{CLIPBASE_IMPORT_DIR / 'icopy.json'}")
+    print("下一步执行：cargo run --bin halo_import -- "
+          f"{HALO_IMPORT_DIR / 'icopy.json'}")
     return 0
 
 

@@ -143,7 +143,9 @@ unsafe fn copy_attr(el: *const c_void, name: &str) -> Option<*const c_void> {
 
 unsafe fn array_items(value: *const c_void) -> Vec<*const c_void> {
     let n = CFArrayGetCount(value);
-    (0..n.max(0)).map(|i| CFArrayGetValueAtIndex(value, i)).collect()
+    (0..n.max(0))
+        .map(|i| CFArrayGetValueAtIndex(value, i))
+        .collect()
 }
 
 /// CFURL → POSIX 路径。
@@ -246,14 +248,8 @@ pub(super) fn start_hit(x: f64, y: f64) -> StartHit {
             // 只认 Finder 自己的元素：别的窗口盖在上面时不能误取，也不算「不是文件」。
             if hit_pid == pid {
                 out = match file_url_of_ancestors(element) {
-                    UrlLookup::Found(path) => {
-                        if Path::new(&path).is_dir() {
-                            // 文件夹不是转换载荷（§3.1：拖动内容必须包含文件）。
-                            StartHit::NotFile
-                        } else {
-                            StartHit::File(path)
-                        }
-                    }
+                    // 文件夹也是合法载荷：环形盘对目录只保留打包等工具动作。
+                    UrlLookup::Found(path) => StartHit::File(path),
                     // 上溯干净结束、没有 URL：指针在空白/工具栏/侧边栏上。
                     UrlLookup::Absent => StartHit::NotFile,
                     UrlLookup::Timeout => StartHit::Unknown,

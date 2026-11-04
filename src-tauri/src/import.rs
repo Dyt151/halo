@@ -1,8 +1,8 @@
-//! 从其它剪贴板工具迁移历史到 ClipBase。
+//! 从其它剪贴板工具迁移历史到 Halo。
 //!
 //! 导入数据由外部脚本产出（见 `scripts/import_icopy.py`），格式为 JSON：
 //! `content` 字段直接就是 [`ClipContent`] 的 serde 表示，因此
-//! **hash / preview / search_text / 序列化格式全部由 ClipBase 自身计算**，
+//! **hash / preview / search_text / 序列化格式全部由 Halo 自身计算**，
 //! 与正常捕获入库的记录完全同构。
 //!
 //! 迁移记录会**保留原始时间戳**（普通捕获用「当前时间」）。
@@ -63,7 +63,7 @@ pub struct ImportSummary {
 /// 通常只有几 MB，64 MB 已经非常宽松。
 const MAX_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
 
-/// 把导入文件里的历史写入 ClipBase。
+/// 把导入文件里的历史写入 Halo。
 /// `replace` 为 true 时按「创建时间 + 来源 App」原位更新已有记录，
 /// 供修复提取逻辑后重导入用（否则 hash 变化会新增重复行）。
 /// `policy` 与剪贴板捕获共用同一套敏感内容规则（见 [`sensitivity::apply`]）。

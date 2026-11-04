@@ -39,7 +39,7 @@ pub fn has_accessibility_permission() -> bool {
 
 /// 主动请求辅助功能权限。
 ///
-/// 为什么不能只靠「打开系统设置」：授权面板是白名单式的，列表里没有 ClipBase
+/// 为什么不能只靠「打开系统设置」：授权面板是白名单式的，列表里没有 Halo
 /// 时用户得自己点 `+` 去 `target/release/bundle/...` 里找 app（找不到就以为坏了）。
 /// `AXIsProcessTrustedWithOptions` 带 prompt 会由系统把本 App 直接加进列表并
 /// 弹窗提示，用户只需勾选。
@@ -216,7 +216,7 @@ pub fn plain_content(content: &ClipContent) -> ClipContent {
 fn trigger_paste() -> Result<(), String> {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
-    // 先把焦点还给「唤出面板前」的前台 App，否则 ⌘V 会贴进 ClipBase 自己。
+    // 先把焦点还给「唤出面板前」的前台 App，否则 ⌘V 会贴进 Halo 自己。
     restore_frontmost_app();
 
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;

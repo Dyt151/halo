@@ -120,7 +120,7 @@ export default function ClipDetail({
               ))}
             </ul>
           ) : clip.content.kind === "image" ? (
-            // 图片走 asset 协议（scope 已收敛到 $HOME/.clipbase），原图等比展示。
+            // 图片走 asset 协议（scope 已收敛到 $HOME/.halo），原图等比展示。
             <img
               src={convertFileSrc(clip.content.value.path)}
               alt={clip.preview || "剪贴板图片"}

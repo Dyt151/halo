@@ -18,6 +18,7 @@ pub mod sensitivity;
 pub mod services;
 pub mod sound;
 pub mod stack;
+pub mod statusbar;
 
 pub use clipboard::types::{ClipContent, ClipItem, ContentType, HistoryQuery, SyncState};
 pub use clipboard::ClipboardMonitor;

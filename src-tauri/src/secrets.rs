@@ -13,7 +13,9 @@ use std::process::Command;
 use crate::config::settings::SyncConfig;
 
 /// 钥匙串 service 名（钥匙串访问.app 里显示的条目名）。
-const SERVICE: &str = "ClipBase";
+const SERVICE: &str = "Halo";
+/// 改名前的 service 名：存量密码还在这条下面，读到后顺手搬到 `Halo`。
+const LEGACY_SERVICE: &str = "ClipBase";
 /// WebDAV 密码的 account 名。
 const ACCOUNT_WEBDAV: &str = "webdav-password";
 /// 端到端加密口令的 account 名（同为敏感信息，一并入钥匙串）。
@@ -49,8 +51,17 @@ pub fn store(account: &str, value: &str) -> Result<(), String> {
 
 /// 读取一条通用密码；条目不存在返回 `None`。
 pub fn load(account: &str) -> Option<String> {
+    read(SERVICE, account).or_else(|| {
+        // 改名后第一次读取：把旧 service 下的密码搬到新名字，之后就不用再回退。
+        let value = read(LEGACY_SERVICE, account)?;
+        let _ = store(account, &value);
+        Some(value)
+    })
+}
+
+fn read(service: &str, account: &str) -> Option<String> {
     let output = Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", SERVICE, "-a", account, "-w"])
+        .args(["find-generic-password", "-s", service, "-a", account, "-w"])
         .output()
         .ok()?;
     if !output.status.success() {

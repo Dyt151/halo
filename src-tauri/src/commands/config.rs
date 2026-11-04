@@ -18,6 +18,10 @@ pub fn patch_config(state: State<'_, AppState>, patch: serde_json::Value) -> Com
     apply_monitor(&state, &saved);
     // 环形盘的「Option + 拖动」开关需要即时生效（不用重启应用）。
     crate::core::option_tap::set_enabled(saved.ring.option_tap);
+    // 状态栏图标开关同理：关掉后托盘图标立即消失，不需要重启。
+    crate::window::apply_tray_visibility(&state.app, saved.statusbar.enabled);
+    // 图标的三区内容（中心图形 / 电量环 / 音量点）也可能刚被改掉。
+    crate::core::statusbar::tray::request_refresh();
     let _ = state.app.emit(crate::events::CONFIG_CHANGED, &saved);
     Ok(saved)
 }
@@ -57,7 +61,9 @@ pub fn open_system_settings(pane: String) -> CommandResult<()> {
         std::process::Command::new("open")
             .arg(&url)
             .status()
-            .map_err(|e| crate::error::AppError::with_details(9000, "无法打开系统设置", e.to_string()))?;
+            .map_err(|e| {
+                crate::error::AppError::with_details(9000, "无法打开系统设置", e.to_string())
+            })?;
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -72,7 +78,7 @@ pub fn accessibility_status() -> bool {
     crate::core::paste::has_accessibility_permission()
 }
 
-/// 主动请求辅助功能权限（系统弹窗 + 自动把 ClipBase 加进白名单）。
+/// 主动请求辅助功能权限（系统弹窗 + 自动把 Halo 加进白名单）。
 ///
 /// 只由设置页的按钮调用：带 prompt 的查询每次都会弹窗。返回值是**调用当时**的
 /// 状态，用户还没勾选时仍然是 `false`，前端应提示「已弹出系统提示，请勾选」。
@@ -92,7 +98,11 @@ pub struct HotkeyCheck {
 fn canonical(accelerator: &str) -> String {
     let mut mods: Vec<&'static str> = Vec::new();
     let mut key = String::new();
-    for part in accelerator.split('+').map(str::trim).filter(|p| !p.is_empty()) {
+    for part in accelerator
+        .split('+')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
         match part.to_ascii_lowercase().as_str() {
             "control" | "ctrl" => mods.push("control"),
             "alt" | "option" => mods.push("alt"),
@@ -124,7 +134,10 @@ const RESERVED: &[(&str, &str)] = &[
     ("cmd+space", "⌘Space 是 Spotlight"),
     ("cmd+esc", "⌘⎋ 是系统的强制退出前台 App"),
     ("alt+cmd+esc", "⌥⌘⎋ 是系统的强制退出面板"),
-    ("control+c", "⌃C 是终端的中断信号（SIGINT），抢走就没法中断命令"),
+    (
+        "control+c",
+        "⌃C 是终端的中断信号（SIGINT），抢走就没法中断命令",
+    ),
     ("cmd+shift+3", "⌘⇧3 是系统截屏"),
     ("cmd+shift+4", "⌘⇧4 是系统截屏"),
     ("cmd+shift+5", "⌘⇧5 是系统截屏/录屏"),
@@ -142,7 +155,10 @@ pub fn validate_hotkey(hotkey: String) -> HotkeyCheck {
 
     let normalized = canonical(&hotkey);
     if normalized.is_empty() {
-        return HotkeyCheck { ok: false, message: Some("请按下完整组合键".into()) };
+        return HotkeyCheck {
+            ok: false,
+            message: Some("请按下完整组合键".into()),
+        };
     }
     if !normalized.contains('+') {
         return HotkeyCheck {
@@ -152,7 +168,10 @@ pub fn validate_hotkey(hotkey: String) -> HotkeyCheck {
     }
     // 修饰键 + 主键：`canonical` 已丢弃主键为空的输入，这里只需比对保留键。
     if let Some((_, reason)) = RESERVED.iter().find(|(combo, _)| *combo == normalized) {
-        return HotkeyCheck { ok: false, message: Some((*reason).into()) };
+        return HotkeyCheck {
+            ok: false,
+            message: Some((*reason).into()),
+        };
     }
     if tauri_plugin_global_shortcut::Shortcut::from_str(&hotkey).is_err() {
         return HotkeyCheck {
@@ -160,7 +179,10 @@ pub fn validate_hotkey(hotkey: String) -> HotkeyCheck {
             message: Some("格式无效（需形如 Control+Shift+C）".into()),
         };
     }
-    HotkeyCheck { ok: true, message: None }
+    HotkeyCheck {
+        ok: true,
+        message: None,
+    }
 }
 
 fn apply_hotkey(state: &AppState, config: &Config) {

@@ -1,12 +1,12 @@
 #!/bin/bash
 # 构建 Finder Sync .appex。产物由 tauri.conf.json 的 bundle.macOS.files
-# 拷进 ClipBase.app/Contents/PlugIns/。
+# 拷进 Halo.app/Contents/PlugIns/。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-OUT="$HERE/build/ClipBaseFinderExtension.appex"
-BIN="$OUT/Contents/MacOS/ClipBaseFinderExtension"
-BUNDLE_ID="${FINDER_EXTENSION_BUNDLE_ID:-com.clipbase.app.FinderExtension}"
+OUT="$HERE/build/HaloFinderExtension.appex"
+BIN="$OUT/Contents/MacOS/HaloFinderExtension"
+BUNDLE_ID="${FINDER_EXTENSION_BUNDLE_ID:-com.halo.desktop.FinderExtension}"
 IDENTITY="${CODESIGN_IDENTITY:--}"
 MIN_VERSION="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
 ARCH="${ARCH:-$(uname -m)}"
@@ -19,7 +19,7 @@ xcrun swiftc \
     -O \
     -whole-module-optimization \
     -parse-as-library \
-    -module-name ClipBaseFinderExtension \
+    -module-name HaloFinderExtension \
     -target "$ARCH-apple-macos$MIN_VERSION" \
     -sdk "$SDK" \
     -framework Foundation \

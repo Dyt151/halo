@@ -13,7 +13,7 @@ import { useClipStore } from "../store/useClipStore";
 import { requestSettingsTab } from "../lib/windows";
 import { Btn, Kbd } from "./ui";
 
-const STORAGE_KEY = "clipbase.onboarded.v1";
+const STORAGE_KEY = "halo.onboarded.v1";
 
 function seen(): boolean {
   try {
@@ -72,10 +72,10 @@ export default function FirstRunGuide({ onOpenSettings }: { onOpenSettings: () =
         aria-labelledby="first-run-title"
       >
         <h2 id="first-run-title" className="text-[15px]/[20px] font-semibold text-white">
-          欢迎使用 ClipBase
+          欢迎使用 Halo
         </h2>
         <p className="mt-[6px] text-[12px]/[18px] text-white/55">
-          ClipBase 在后台常驻（没有 Dock 图标也不占菜单栏），快捷键唤出一个横向面板，选中即回贴到刚才的 App。
+          Halo 在后台常驻（没有 Dock 图标也不占菜单栏），快捷键唤出一个横向面板，选中即回贴到刚才的 App。
         </p>
 
         <div className="mt-[14px] space-y-[8px] rounded-[8px] bg-white/[0.04] p-[12px]">
@@ -89,7 +89,7 @@ export default function FirstRunGuide({ onOpenSettings }: { onOpenSettings: () =
         <div className="mt-[14px] space-y-[6px] text-[12px]/[18px] text-white/55">
           <p>
             <span className="text-white/80">数据只在本机。</span>
-            历史与截图存放在 ~/.clipbase，密码与加密口令存进系统钥匙串，
+            历史与截图存放在 ~/.halo，密码与加密口令存进系统钥匙串，
             默认不联网、不上传。
           </p>
           <p>

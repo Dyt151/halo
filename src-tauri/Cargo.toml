@@ -1,23 +1,25 @@
 [package]
-name = "clipbase"
+name = "halo"
 version = "0.1.0"
-description = "ClipBase — an open-source, extensible clipboard manager"
-authors = ["ClipBase contributors"]
+description = "Halo — an open-source, extensible clipboard manager"
+authors = ["Halo contributors"]
 edition = "2021"
 rust-version = "1.77"
-# 存在 src/main.rs 与 src/bin/clipbase_import.rs 两个二进制，显式指定主二进制，
+# 存在 src/main.rs 与 src/bin/halo_import.rs 两个二进制，显式指定主二进制，
 # 否则 tauri build 无法推断。
-default-run = "clipbase"
+default-run = "halo"
 
 [lib]
-name = "clipbase_lib"
+name = "halo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1"
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "image-png"] }
+# 菜单栏（状态栏）图标需要 tray-icon feature；image-png 用于内嵌模板图解码。
+tauri = { version = "2", features = ["protocol-asset", "image-png", "tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 # 单实例：剪贴板工具被启动两次会双份监控、双份写库（评审 S8）。
 tauri-plugin-single-instance = "2"
@@ -66,7 +68,14 @@ image = { version = "0.25", default-features = false, features = [
 objc2 = "0.5"
 objc2-app-kit = "0.2"
 # 面板的全屏 Space 宿主（NSPanel）需要 CGRect 参与 msg_send。
-objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
+objc2-foundation = { version = "0.2", features = ["NSGeometry", "NSAutoreleasePool"] }
+# 状态栏面板：getifaddrs 取 IP、dlopen/dlsym 按需加载 CoreWLAN / IOBluetooth。
+libc = "0.2"
+# 菜单栏图标改用 CoreGraphics 直接描边与排版，才能照搬 Status Trio 的矢量常数
+# 与 SF Pro Rounded 数字（纯 CPU 光栅器画不出圆体字，字形一直不对）。
+core-graphics = "0.25"
+core-text = "22"
+core-foundation = "0.10"
 
 [profile.release]
 codegen-units = 1

@@ -76,7 +76,7 @@ export default function BackupSettings() {
 
   return (
     <div className="space-y-[16px]">
-      <CardGroup title="数据位置" subtitle="ClipBase 全部数据都在本机这个目录">
+      <CardGroup title="数据位置" subtitle="Halo 全部数据都在本机这个目录">
         <Row label="数据目录">
           <div className="flex items-center gap-[6px]">
             <Btn

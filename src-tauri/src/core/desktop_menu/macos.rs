@@ -31,8 +31,8 @@ const TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 
 /// `kCGEventSourceUserData`：给「重新投递给 Finder」的合成事件打标记。
 const SOURCE_USER_DATA_FIELD: u32 = 42;
-/// 标记值随便取，只要不是硬件事件会带的值；"CLIPBASE" 的 ASCII。
-const REPOST_MAGIC: i64 = 0x434C_4950_4241_5345;
+/// 标记值随便取，只要不是硬件事件会带的值；"HALO" 的 ASCII。
+const REPOST_MAGIC: i64 = 0x4841_4C4F;
 
 const CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 
@@ -300,7 +300,7 @@ unsafe fn on_right_down(event: *mut c_void) -> bool {
         return false;
     }
 
-    tracing::info!(x = point.x, y = point.y, ?context, "桌面右键：接管并弹出 ClipBase 菜单");
+    tracing::info!(x = point.x, y = point.y, ?context, "桌面右键：接管并弹出 Halo 菜单");
     true
 }
 
@@ -397,7 +397,7 @@ unsafe fn classify(point: CGPoint) -> Option<MenuContext> {
                 return None;
             }
             // 没有 URL 也没命中图标/组件：点在桌面容器或图标标签的空白处，
-            // 仍按空白处处理，至少能拿到 ClipBase 菜单。
+            // 仍按空白处处理，至少能拿到 Halo 菜单。
             ChildHit::None => MenuContext::Blank,
         },
     };
@@ -640,7 +640,7 @@ declare_class!(
     unsafe impl ClassType for MenuTarget {
         type Super = NSObject;
         type Mutability = mutability::InteriorMutable;
-        const NAME: &'static str = "ClipBaseDesktopMenuTarget";
+        const NAME: &'static str = "HaloDesktopMenuTarget";
     }
 
     impl DeclaredClass for MenuTarget {}
@@ -836,7 +836,7 @@ fn handle_tag(tag: isize) {
                         Ok(path) => tracing::info!("已粘贴 {}", path.display()),
                         Err(err) => {
                             tracing::warn!("粘贴失败: {err}");
-                            services::notify("ClipBase", &format!("粘贴失败：{err}"));
+                            services::notify("Halo", &format!("粘贴失败：{err}"));
                         }
                     }
                 }
@@ -854,7 +854,7 @@ fn handle_tag(tag: isize) {
                 Ok(path) => tracing::info!("已新建文件夹 {}", path.display()),
                 Err(err) => {
                     tracing::warn!("新建文件夹失败: {err}");
-                    services::notify("ClipBase", &format!("新建文件夹失败：{err}"));
+                    services::notify("Halo", &format!("新建文件夹失败：{err}"));
                 }
             });
         }
@@ -885,7 +885,7 @@ fn handle_tag(tag: isize) {
             };
             let Some(target) = context.target_directory() else {
                 tracing::warn!("动作「{}」：没有可用的目标目录", service.menu_title());
-                services::notify("ClipBase", "未能识别要操作的文件夹");
+                services::notify("Halo", "未能识别要操作的文件夹");
                 return;
             };
             std::thread::spawn(move || {
@@ -905,7 +905,7 @@ fn open_items(paths: &[PathBuf]) {
         Ok(status) => tracing::warn!("打开失败，退出码 {:?}", status.code()),
         Err(err) => {
             tracing::warn!("打开失败: {err}");
-            services::notify("ClipBase", &format!("打开失败：{err}"));
+            services::notify("Halo", &format!("打开失败：{err}"));
         }
     }
 }
@@ -930,11 +930,11 @@ fn show_info(paths: &[PathBuf]) {
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             tracing::warn!("显示简介失败: {stderr}");
-            services::notify("ClipBase", &format!("显示简介失败：{stderr}"));
+            services::notify("Halo", &format!("显示简介失败：{stderr}"));
         }
         Err(err) => {
             tracing::warn!("无法执行 osascript: {err}");
-            services::notify("ClipBase", &format!("显示简介失败：{err}"));
+            services::notify("Halo", &format!("显示简介失败：{err}"));
         }
     }
 }
@@ -982,7 +982,7 @@ fn move_to_trash(paths: &[PathBuf]) {
                 let reason = ns_error_text(error).unwrap_or_else(|| "未知错误".to_string());
                 tracing::warn!("移到废纸篓失败 {}: {reason}", path.display());
                 services::notify(
-                    "ClipBase",
+                    "Halo",
                     &format!("移到废纸篓失败：{}（{reason}）", path.display()),
                 );
             }

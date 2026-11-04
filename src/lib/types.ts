@@ -202,7 +202,7 @@ export interface GestureStatus {
   accessibility: boolean;
   /** 事件监听是否真的建好（授权了但没起来时与 accessibility 不一致）。 */
   tapAlive: boolean;
-  /** 当前前台是否满足条件（Finder 或 ClipBase 自己）。 */
+  /** 当前前台是否满足条件（Finder 或 Halo 自己）。 */
   frontmostOk: boolean;
   /** 环形会话状态（idle/capturing/ready/converting）。 */
   state: string;
@@ -270,6 +270,8 @@ export interface Config {
   ring: RingConfig;
   /** 转换预设库（环形动作引用的配方都在这里）。 */
   conversion: ConversionConfig;
+  /** 状态栏图标与下拉面板。 */
+  statusbar: StatusBarConfig;
   /** 上次停留的设置分区（主窗口默认打开此分区）。 */
   last_settings_section: string;
 }
@@ -328,7 +330,7 @@ export interface ContributionEntry {
 export interface FinderIntegrationStatus {
   /** 当前平台是否支持（仅 macOS）。 */
   supported: boolean;
-  /** 系统扩展数据库里是否已有 ClipBase Finder 扩展。 */
+  /** 系统扩展数据库里是否已有 Halo Finder 扩展。 */
   installed: boolean;
   /** 扩展当前是否启用。 */
   enabled: boolean;
@@ -427,6 +429,286 @@ export interface ConversionPreset {
 /** 转换预设库（Rust `ConversionConfig`）。 */
 export interface ConversionConfig {
   presets: ConversionPreset[];
+}
+
+/** 状态栏面板模块 id（与 Rust `STATUSBAR_SECTIONS` 对齐）。 */
+export type StatusBarSection =
+  | "battery"
+  | "volume"
+  | "audio_input"
+  | "input_source"
+  | "network"
+  | "vpn"
+  | "bluetooth";
+
+/** 菜单栏图标中心图形（与 Rust `GLYPH_CENTERS` 对齐）。 */
+export type GlyphCenter = "auto" | "wifi" | "bluetooth" | "clipboard";
+
+/** 音量区的画法（与 Rust `GLYPH_VOLUME_STYLES` 对齐）。 */
+export type GlyphVolumeStyle = "arc" | "dots";
+
+/** 彩色图标的墨色取向（与 Rust `GLYPH_APPEARANCES` 对齐）。 */
+export type GlyphAppearance = "auto" | "light" | "dark";
+
+/** 状态栏图标配置（`设置 → 状态栏图标`，与 Rust `StatusBarConfig` 对齐）。 */
+export interface StatusBarConfig {
+  /** 显示菜单栏图标。 */
+  enabled: boolean;
+  /** 面板显示的模块及其顺序。 */
+  sections: StatusBarSection[];
+  /** 面板里滚轮直接调音量。 */
+  scroll_adjusts_volume: boolean;
+  /** 滚轮调节的方向。 */
+  scroll_scope: "output" | "input";
+  /** 滚轮方向反转。 */
+  scroll_natural: boolean;
+  /** 图标中心画什么。 */
+  glyph_center: GlyphCenter;
+  /** 外环画电量。 */
+  glyph_battery_ring: boolean;
+  /** 环顶缺口里写电量数字。 */
+  glyph_battery_percent: boolean;
+  /** 底部画输出音量。 */
+  glyph_volume: boolean;
+  /** 音量画成圆弧条还是四个点。 */
+  glyph_volume_style: GlyphVolumeStyle;
+  /** 有线连接改用普通 Wi-Fi 图标。 */
+  glyph_wifi_for_ethernet: boolean;
+  /** iPhone 个人热点改用普通 Wi-Fi 图标。 */
+  glyph_wifi_for_hotspot: boolean;
+  /** 临时网络改用普通 Wi-Fi 图标。 */
+  glyph_wifi_for_temporary: boolean;
+  /** 互联网共享改用普通 Wi-Fi 图标。 */
+  glyph_wifi_for_sharing: boolean;
+  /** 彩色图标；关闭则交系统按菜单栏明暗反色。 */
+  glyph_colored: boolean;
+  /** 彩色图标的墨色取向。 */
+  glyph_appearance: GlyphAppearance;
+}
+
+/** 音频方向：输出 / 输入。 */
+export type AudioScope = "output" | "input";
+
+/**
+ * 菜单栏图标的实时预览（Rust `statusbar::tray::Preview`）。
+ *
+ * `image` 是 base64 的 `size × size` RGBA，与贴进菜单栏的那张图字节一致：
+ * 彩色模式下 RGB 已经带好电池色与墨色，模板模式下只有 alpha 承载信息。
+ */
+export interface StatusBarGlyphPreview {
+  image: string;
+  size: number;
+  tooltip: string;
+  center:
+    | "wifi"
+    | "hotspot"
+    | "ethernet"
+    | "temporary"
+    | "shared"
+    | "bluetooth"
+    | "clipboard";
+  /** 彩色图标按深色菜单栏下的白墨；预览条底色要跟着走。 */
+  dark_bar: boolean;
+}
+
+/** 可切换的音频设备（Rust `AudioDevice`）。 */
+export interface StatusBarAudioDevice {
+  id: number;
+  name: string;
+  is_default: boolean;
+}
+
+/** 默认音频设备状态（Rust `AudioDeviceState`）。 */
+export interface StatusBarAudioState {
+  available: boolean;
+  device_id: number;
+  device_name: string;
+  /** 0 ~ 1。 */
+  volume: number;
+  /** 设备是否暴露音量属性（HDMI / 虚拟设备可能没有）。 */
+  volume_available: boolean;
+  muted: boolean;
+  mute_available: boolean;
+  devices: StatusBarAudioDevice[];
+}
+
+/** 电池状态（Rust `BatteryState`）。 */
+export interface StatusBarBattery {
+  present: boolean;
+  percent: number;
+  charging: boolean;
+  /** IOPS `Is Charged`：系统判定真的充满了（副标题第一优先级）。 */
+  charged: boolean;
+  plugged: boolean;
+  /** 系统「低电量模式」：正版副标题在「充电中」之后、`已连接电源` 之前判它。 */
+  low_power: boolean;
+  minutes_to_empty: number | null;
+  minutes_to_full: number | null;
+}
+
+/** 电池详情页读数（Rust `BatteryDetails`，单位已换算为 W / V / A）。 */
+export interface StatusBarBatteryDetails {
+  battery_watts: number | null;
+  system_watts: number | null;
+  input_watts: number | null;
+  adapter_watts: number | null;
+  cycle_count: number | null;
+  voltage_volts: number | null;
+  current_amps: number | null;
+  sampled_at: string | null;
+}
+
+/** 「立即充满电」的 PowerUI 读数（Rust `ChargeToFullState`）。 */
+export interface StatusBarChargeToFullState {
+  /** 这台 Mac + macOS 版本是否支持 PowerUI 充电上限接口。 */
+  available: boolean;
+  valid: boolean;
+  /** 充电上限已启用且档位在 80/85/90/95 之一。 */
+  has_active_limit: boolean;
+  /** 临时解除上限（立即充满）正在进行。 */
+  override_active: boolean;
+  limit: number | null;
+  error: string | null;
+}
+
+/** 面板可见时的轻量音量轮询（Rust `AudioLevels`）：只用来让滑条跟上硬件音量键。 */
+export interface StatusBarAudioLevels {
+  output: StatusBarAudioState;
+  input: StatusBarAudioState;
+}
+
+/** 输入法（Rust `InputSource`）。 */
+export interface StatusBarInputSource {
+  id: string;
+  name: string;
+  selected: boolean;
+  /** 无图标输入源的 1~2 字标记（正版 `InputSourceShortLabel`），读不出时为 null。 */
+  marker: string | null;
+}
+
+/** Wi-Fi / 首选链路状态（Rust `NetworkState`）。 */
+export interface StatusBarNetwork {
+  available: boolean;
+  powered: boolean;
+  connected: boolean;
+  /** macOS 14.4+ 未授权定位时为 null。 */
+  ssid: string | null;
+  rssi: number | null;
+  /** 频段文案（「2.4 GHz」/「5 GHz」/「6 GHz」）：正版只在 Wi-Fi/热点链路时给。 */
+  band: string | null;
+  /** Wi‑Fi 名称授权态：`authorized` / `not_determined` / `denied` / `restricted`。 */
+  name_access: "authorized" | "not_determined" | "denied" | "restricted";
+  interface: string | null;
+  ipv4: string | null;
+  link: "wifi" | "hotspot" | "sharing" | "temporary" | "ethernet" | "none";
+}
+
+/** Wi‑Fi 二级页：一条扫描到的 AP（Rust `WifiCandidate`）。 */
+export interface StatusBarWifiCandidate {
+  /** CoreWLAN 原样返回的 SSID，首尾空格也是身份的一部分。 */
+  ssid: string;
+  bssid: string | null;
+  /** dBm；非负值按正版视为「读不到」。 */
+  rssi: number | null;
+  channel: number | null;
+  /** `CWSecurity` 原始值（-1 = 未知）。 */
+  security: number;
+}
+
+/** Wi‑Fi 二级页「显示详情」的原料（Rust `WifiDetails` = 正版 `WiFiConnectionDetails`）。 */
+export interface StatusBarWifiDetails {
+  ssid: string | null;
+  bssid: string | null;
+  band: string | null;
+  channel: number | null;
+  channel_width: string | null;
+  rssi: number | null;
+  noise: number | null;
+  phy_mode: string | null;
+  transmit_rate: number | null;
+  security: number;
+  country_code: string | null;
+  interface_name: string | null;
+  ipv4_addresses: string[];
+  ipv6_addresses: string[];
+  router: string | null;
+  dns_servers: string[];
+}
+
+/** Wi‑Fi 二级页一次读数（Rust `WifiScan`）。 */
+export interface StatusBarWifiScan {
+  available: boolean;
+  powered: boolean;
+  name_access: "authorized" | "not_determined" | "denied" | "restricted";
+  /** `ready` / `poweredOff` / `noInterface` / `failed`。 */
+  list_state: "ready" | "poweredOff" | "noInterface" | "failed";
+  candidates: StatusBarWifiCandidate[];
+  connected_bssid: string | null;
+  known_ssids: string[];
+  details: StatusBarWifiDetails;
+  hotspot: boolean;
+}
+
+/** 输入法切换提示（Rust `InputSourceHint`，事件 `halo://input-source-changed`）。 */
+export interface InputSourceHint {
+  id: string;
+  name: string;
+  marker: string | null;
+  /** 在可切换列表里的位置（从 1 开始）；读不到时为 0，前端不画圆点。 */
+  index: number;
+  total: number;
+}
+
+/** 蓝牙设备（Rust `BluetoothDevice`）：已连接与已配对的都会列出。 */
+export interface StatusBarBluetoothDevice {
+  name: string;
+  address: string | null;
+  battery: number | null;
+  connected: boolean;
+  /** `device_minorType`（Headphones / Keyboard / Mouse…）。 */
+  kind: string | null;
+}
+
+export interface StatusBarBluetooth {
+  available: boolean;
+  powered: boolean;
+  devices: StatusBarBluetoothDevice[];
+}
+
+/** 齿轮可打开的系统设置面板（Rust `SYSTEM_PANES` 白名单键）。 */
+export type SystemPane =
+  | "battery"
+  | "wifi"
+  | "bluetooth"
+  | "sound_output"
+  | "sound_input"
+  | "keyboard"
+  | "location"
+  | "sharing"
+  | "bluetooth_permission";
+
+/** 尚未接入的能力（Rust `future::Capability`）。 */
+export interface StatusBarCapability {
+  id: string;
+  name: string;
+  supported: boolean;
+  /** 计划批次（3 = 后续接入）。 */
+  phase: number;
+  reason: string | null;
+}
+
+/** 状态栏面板一次拉齐的快照（Rust `StatusBarState`）。 */
+export interface StatusBarSnapshot {
+  /** 系统强调色（`#RRGGBB`），面板所有强调元素都用它。 */
+  accent: string;
+  audio_output: StatusBarAudioState;
+  audio_input: StatusBarAudioState;
+  battery: StatusBarBattery;
+  input_sources: StatusBarInputSource[];
+  current_input_source: string | null;
+  network: StatusBarNetwork;
+  bluetooth: StatusBarBluetooth;
+  capabilities: StatusBarCapability[];
 }
 
 /** 本地备份导出结果（Rust `ExportResult`）。 */

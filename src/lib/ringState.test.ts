@@ -72,6 +72,10 @@ describe("ringCenterTitle · 中心标题", () => {
     expect(ringCenterTitle(3, "混合文件")).toBe("3 个文件 · 混合");
   });
 
+  it("文件夹写「N 个文件夹」", () => {
+    expect(ringCenterTitle(1, "文件夹")).toBe("1 个文件夹");
+  });
+
   it("其它类别直接拼接", () => {
     expect(ringCenterTitle(2, "PDF")).toBe("2 个 PDF");
   });

@@ -23,6 +23,15 @@
   --accent-tint: rgba(232, 163, 61, 0.14);
   --accent-disabled: rgba(232, 163, 61, 0.32);
 
+  /* 状态栏面板：强调色由 Rust 读「系统设置 → 外观 → 强调色」后内联写入，
+     这里只是首帧兜底（macOS 默认蓝）。面板里的选中底/滑条/开启态都取它，
+     不再用品牌橙。 */
+  --panel-accent: #007aff;
+  --on-accent: #ffffff;
+  --panel-muted-fill: rgba(255, 255, 255, 0.55);
+  /* 未选中设备头像：正版是 `Color.secondary.opacity(0.14)`。 */
+  --panel-tile: rgba(255, 255, 255, 0.14);
+
   /* 文本 */
   --text-primary: #ffffff;
   --text-preview: #e8e8ed;
@@ -87,6 +96,9 @@
 
   --accent-tint: rgba(232, 163, 61, 0.18);
   --accent-disabled: rgba(232, 163, 61, 0.28);
+
+  --panel-muted-fill: rgba(0, 0, 0, 0.45);
+  --panel-tile: rgba(0, 0, 0, 0.10);
 
   --text-primary: #000000;
   --text-preview: #1c1c1e;
@@ -270,6 +282,17 @@ body {
     border-radius: 9999px;
     box-shadow: 0 0 0 3px rgba(232, 163, 61, 0.35);
   }
+  /* 状态栏面板的音量条：macOS 滑条是「已填充段 + 轨道」，WebView 默认只画
+     轨道。由 React 通过 --slider-pct / --slider-fill 两个变量给出比例与颜色。 */
+  .slider-accent::-webkit-slider-runnable-track {
+    background: linear-gradient(
+      to right,
+      var(--slider-fill, var(--panel-accent)) 0,
+      var(--slider-fill, var(--panel-accent)) var(--slider-pct, 0%),
+      rgba(255, 255, 255, 0.12) var(--slider-pct, 0%),
+      rgba(255, 255, 255, 0.12) 100%
+    );
+  }
 
   /* ---------- 卡片 / 分组 / 菜单 ---------- */
   .card-clip {
@@ -378,19 +401,24 @@ body {
 /* 没有翻面动画：运行态只有一面（§4）。                                  */
 /* ================================================================== */
 @keyframes ring-layer-in {
+  /* 首帧不停留在 0：动画一旦在隐藏的 webview 里冻住，整张盘就是透明的。
+   * 留 0.6 的底，最坏情况下还是看得见；前端另有定时器会摘掉动画类。 */
   from {
-    opacity: 0;
+    transform: scale(0.98);
+    opacity: 0.6;
   }
   to {
+    transform: scale(1);
     opacity: 1;
   }
 }
 
 @keyframes ring-sector-in {
-  /* 绕**圆心**缩放并带 6° 回正：Wheel §1.3「从中心缩放并带轻微旋转」。 */
+  /* 绕**圆心**缩放并带 6° 回正：Wheel §1.3「从中心缩放并带轻微旋转」。
+   * 首帧不写 opacity:0——同 ring-layer-in，卡住时扇区会彻底消失。 */
   from {
     transform: rotate(-6deg) scale(0.18);
-    opacity: 0;
+    opacity: 0.35;
   }
   to {
     transform: rotate(0deg) scale(1);
@@ -485,6 +513,63 @@ body {
   fill: rgba(232, 163, 61, 0.22);
   stroke: var(--ring-label-active);
   stroke-dasharray: 5 4;
+}
+
+/* ================================================================== */
+/* 输入法切换提示（imehud 窗口）                                       */
+/* ================================================================== */
+
+/* 窗口本身透明，胶囊由下面两条规则画；提示恒用深色——它浮在任意 App 之上，
+   跟随浅色主题会在白底上糊成一片（与环形盘同理）。 */
+.app-surface--hud {
+  background: transparent;
+  border: none;
+}
+
+.ime-hud-in,
+.ime-hud-out {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  height: 40px;
+  padding: 0 14px;
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(24, 24, 26, 0.78);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+}
+
+@keyframes ime-hud-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes ime-hud-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, -6px, 0) scale(0.98);
+  }
+}
+
+/* 三段时长与 Rust 的收窗时间一致：进场 200 + 停留 1100 + 出场 240。 */
+.ime-hud-in {
+  animation: ime-hud-in 200ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+
+.ime-hud-out {
+  animation: ime-hud-out 240ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -636,7 +721,21 @@ body {
 .light .kbd { background: rgba(0, 0, 0, 0.06); color: rgba(0, 0, 0, 0.5); }
 .light .switch-off { background: rgba(0, 0, 0, 0.16); }
 
-.light .slider::-webkit-slider-runnable-track { background: rgba(0, 0, 0, 0.12); }
+/* 只给普通滑条换浅色轨道：`.slider-accent` 的填充渐变由上面那条规则负责，
+   两边选择器权重相同、这条在后面，不排除就会把音量条的填充整条盖掉。 */
+.light .slider:not(.slider-accent)::-webkit-slider-runnable-track {
+  background: rgba(0, 0, 0, 0.12);
+}
+.light .slider-accent::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right,
+    var(--slider-fill, var(--panel-accent)) 0,
+    var(--slider-fill, var(--panel-accent)) var(--slider-pct, 0%),
+    rgba(0, 0, 0, 0.12) var(--slider-pct, 0%),
+    rgba(0, 0, 0, 0.12) 100%
+  );
+}
+
 
 .light .card-clip { border-color: rgba(0, 0, 0, 0.08); background: rgba(0, 0, 0, 0.04); }
 .light .card-clip:hover { background: rgba(0, 0, 0, 0.06); }

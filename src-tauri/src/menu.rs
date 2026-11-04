@@ -35,19 +35,19 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     // 版本号取自打包元数据，与前端 `getVersion()` 同源（清单 12）。
     let about = PredefinedMenuItem::about(
         app,
-        Some("关于 ClipBase"),
+        Some("关于 Halo"),
         Some(tauri::menu::AboutMetadata {
-            name: Some("ClipBase".into()),
+            name: Some("Halo".into()),
             version: Some(app.package_info().version.to_string()),
             ..Default::default()
         }),
     )?;
     let settings = MenuItem::with_id(app, "settings", "设置…", true, Some("CmdOrCtrl+,"))?;
     let services = PredefinedMenuItem::services(app, Some("服务"))?;
-    let hide = PredefinedMenuItem::hide(app, Some("隐藏 ClipBase"))?;
+    let hide = PredefinedMenuItem::hide(app, Some("隐藏 Halo"))?;
     let hide_others = PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?;
     let show_all = PredefinedMenuItem::show_all(app, Some("全部显示"))?;
-    let quit = PredefinedMenuItem::quit(app, Some("退出 ClipBase"))?;
+    let quit = PredefinedMenuItem::quit(app, Some("退出 Halo"))?;
 
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
@@ -67,7 +67,7 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         &sep4,
         &quit,
     ];
-    Submenu::with_items(app, "ClipBase", true, &items)
+    Submenu::with_items(app, "Halo", true, &items)
 }
 
 fn build_edit_menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
@@ -117,8 +117,8 @@ pub fn handle_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
         "show_history" => crate::window::show_main_window_with_page(app, Some("history".into())),
         "show_panel" => crate::window::toggle_panel_window(app),
         // 撤销/重做只在**前台**窗口生效，具体做什么由前端按焦点决定。
-        "undo" => emit_to_focused(app, "clipbase://menu-undo"),
-        "redo" => emit_to_focused(app, "clipbase://menu-redo"),
+        "undo" => emit_to_focused(app, "halo://menu-undo"),
+        "redo" => emit_to_focused(app, "halo://menu-redo"),
         _ => {}
     }
 }

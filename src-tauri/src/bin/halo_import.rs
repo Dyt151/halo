@@ -1,23 +1,23 @@
-//! 命令行导入工具：把 JSON 格式的历史导入 ClipBase 数据库。
+//! 命令行导入工具：把 JSON 格式的历史导入 Halo 数据库。
 //!
 //! 用法：
-//!     cargo run --bin clipbase_import -- <import.json> [--replace] [--fix-image-sizes] [--db <path>]
+//!     cargo run --bin halo_import -- <import.json> [--replace] [--fix-image-sizes] [--db <path>]
 //!
-//! JSON 由 `scripts/import_icopy.py` 产出（iCopy → ClipBase 迁移）。
-//! 导入走 ClipBase 自己的 `HistoryService`，因此 hash / preview / 检索索引
+//! JSON 由 `scripts/import_icopy.py` 产出（iCopy → Halo 迁移）。
+//! 导入走 Halo 自己的 `HistoryService`，因此 hash / preview / 检索索引
 //! 与正常捕获入库的记录完全一致，并保留原始时间戳。
 //!
 //! - `--replace`：按「创建时间 + 来源 App」原位更新既有记录（修复提取逻辑后
 //!   重导入用；不加此参数时按 hash 去重，内容变化会产生新行）；
 //! - `--fix-image-sizes`：按磁盘文件回填图片记录的 size_bytes 与缺失宽高（只维护不导入）；
-//! - `--db <path>`：指定数据库路径（默认 `~/.clipbase/data/clipbase.db`，测试用）。
+//! - `--db <path>`：指定数据库路径（默认 `~/.halo/data/halo.db`，测试用）。
 
 use std::sync::{Arc, Mutex};
 
-use clipbase_lib::config::ConfigService;
-use clipbase_lib::core::history::HistoryService;
-use clipbase_lib::import;
-use clipbase_lib::storage;
+use halo_lib::config::ConfigService;
+use halo_lib::core::history::HistoryService;
+use halo_lib::import;
+use halo_lib::storage;
 
 fn main() {
     let mut path: Option<String> = None;
@@ -34,6 +34,7 @@ fn main() {
         }
     }
 
+    storage::migrate_legacy_dir();
     if let Err(e) = storage::ensure_dirs() {
         eprintln!("创建数据目录失败：{e}");
         std::process::exit(1);
@@ -65,7 +66,7 @@ fn main() {
     }
 
     let Some(path) = path.map(std::path::PathBuf::from) else {
-        eprintln!("用法：clipbase_import <import.json> [--replace] [--fix-image-sizes] [--db <path>]");
+        eprintln!("用法：halo_import <import.json> [--replace] [--fix-image-sizes] [--db <path>]");
         std::process::exit(2);
     };
 

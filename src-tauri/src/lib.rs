@@ -5,7 +5,7 @@
 // WASM 运行时等）。为避免噪音，允许这些「为未来保留」的公共项暂未使用。
 #![allow(dead_code)]
 
-// 说明：以下模块对 `clipbase_import` 命令行工具开放 pub 可见性，
+// 说明：以下模块对 `halo_import` 命令行工具开放 pub 可见性，
 // 以便迁移工具复用与 App 完全一致的历史/回复写入逻辑。
 pub mod alert;
 pub mod commands;
@@ -59,8 +59,94 @@ fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
     }
 }
 
+/// 托盘矩形取物理像素（窗口定位按物理值再按屏缩放换算）；逻辑坐标的
+/// 罕见情况直接忽略，退回到「光标所在屏」的兜底定位。
+fn tray_rect_physical(rect: &tauri::Rect) -> Option<(f64, f64, f64, f64)> {
+    match (rect.position, rect.size) {
+        (tauri::Position::Physical(p), tauri::Size::Physical(s)) => {
+            Some((p.x as f64, p.y as f64, s.width as f64, s.height as f64))
+        }
+        _ => None,
+    }
+}
+
+/// 创建菜单栏图标：左键开合状态栏面板，右键菜单直达关于 / 设置 / 退出。
+///
+/// 图标不是静态资源，而是按当前系统状态现画的三区模板图（电量环 / 网络 /
+/// 音量点，见 `core::statusbar::glyph`）；之后由 `statusbar::tray` 的循环重画。
+fn create_tray_icon(
+    app: &tauri::App,
+    config: &crate::config::settings::Config,
+) -> tauri::Result<()> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let about = MenuItemBuilder::with_id("tray-about", "关于 Halo").build(app)?;
+    let settings = MenuItemBuilder::with_id("tray-settings", "设置…").build(app)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItemBuilder::with_id("tray-quit", "退出 Halo").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&about, &settings, &separator, &quit])
+        .build()?;
+
+    // 建图标这一步绝不读系统状态：`IOBluetoothPreferenceGetControllerPowerState`
+    // 第一次调用会 dispatch_once 初始化 CoreBluetooth 协调器，而它等的那个回调只能
+    // 由主线程派。setup 正跑在 applicationDidFinishLaunching 里，主线程被自己堵死，
+    // 整个进程卡在启动这一步（托盘重画线程永远起不来）。首帧交给我马上启动的
+    // `tray::start` 后台循环，这里只放一张无状态的剪贴板底图。
+    let options = config.statusbar.glyph_options();
+    let spec = core::statusbar::glyph_spec(&core::statusbar::GlyphState::empty(), &options);
+    // 这一刻状态栏按钮的 effectiveAppearance 还没稳定（实测约 100ms 后才从
+    // VibrantLight 变 VibrantDark），先给系统一张模板图让它自己反色，保证首帧
+    // 墨色正确；tray::start 会在延时同步读到真实明暗后换成彩色图。
+    let palette = core::statusbar::glyph::Palette::template();
+    let size = core::statusbar::glyph::IMAGE_SIZE as u32;
+    let icon =
+        tauri::image::Image::new_owned(core::statusbar::glyph::render(&spec, &palette), size, size);
+    let tray = TrayIconBuilder::with_id(window::TRAY_ICON_ID)
+        .icon(icon)
+        .icon_as_template(true)
+        .tooltip("Halo")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "tray-about" => window::show_main_window_with_page(app, Some("about".into())),
+            "tray-settings" => window::show_main_window_with_page(app, Some("general".into())),
+            "tray-quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // 用抬起事件：按下时窗口还没失焦，抬起时面板状态已经稳定，
+            // 点图标收起的那一次不会被「先失焦、再点击」翻成重新弹出。
+            let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                rect,
+                ..
+            } = event
+            else {
+                return;
+            };
+            if let Some((x, y, w, h)) = tray_rect_physical(&rect) {
+                window::set_tray_icon_rect(x, y, w, h);
+            }
+            window::toggle_tray_panel(tray.app_handle());
+        })
+        .build(app)?;
+    tray.set_visible(config.statusbar.enabled)?;
+    // setup 正在主线程：先把菜单栏真实明暗与系统强调色读进缓存，首帧就用对墨色、
+    // 面板第一次拉取也拿到正确强调色。
+    core::statusbar::tray::sync_menu_bar_appearance(&tray);
+    core::statusbar::cache_system_accent();
+    // tray-icon 建图时会压成 18pt，这里立刻改回 26pt，别等第一帧重画才跳大。
+    core::statusbar::tray::resize_status_item(&tray);
+    Ok(())
+}
+
 pub fn run() {
-    // 日志同时落盘（`~/.clipbase/logs/clipbase.log`）与 stderr：用 `open` 启动时
+    // 改名迁移要在日志初始化之前：日志会先创建 `~/.halo/logs`，目标一存在就搬不动了。
+    storage::migrate_legacy_dir();
+    // 日志同时落盘（`~/.halo/logs/halo.log`）与 stderr：用 `open` 启动时
     // stderr 会被系统丢掉，没有文件就无从定位「手势没反应」这类无 UI 反馈的失败。
     logging::init();
 
@@ -87,7 +173,12 @@ pub fn run() {
     }
     let gate = Arc::new(CapabilityGate::new());
     let bus = Arc::new(MessageBus::new());
-    let modules = ModuleHost::new(db.clone(), storage::modules_dir(), gate.clone(), bus.clone());
+    let modules = ModuleHost::new(
+        db.clone(),
+        storage::modules_dir(),
+        gate.clone(),
+        bus.clone(),
+    );
     let sync = SyncManager::new(db.clone(), history.clone(), config.clone());
     let monitor = ClipboardMonitor::new();
     let paste = PasteService::new(history.clone(), config.clone(), monitor.clone());
@@ -185,6 +276,26 @@ pub fn run() {
             commands::quit_app,
             commands::export_data,
             commands::import_data,
+            commands::statusbar_state,
+            commands::statusbar_glyph_preview,
+            commands::statusbar_set_volume,
+            commands::statusbar_set_mute,
+            commands::statusbar_set_default_device,
+            commands::statusbar_select_input_source,
+            commands::statusbar_set_wifi,
+            commands::statusbar_set_bluetooth,
+            commands::statusbar_request_location,
+            commands::statusbar_battery_details,
+            commands::statusbar_charge_to_full_state,
+            commands::statusbar_charge_to_full,
+            commands::statusbar_cancel_charge_to_full,
+            commands::statusbar_wifi_page,
+            commands::statusbar_audio_levels,
+            commands::statusbar_volume_feedback_enabled,
+            commands::statusbar_open_pane,
+            commands::statusbar_hide,
+            commands::statusbar_open_settings,
+            commands::statusbar_resize,
         ])
         .setup(move |app| {
             // Dock 里不留图标。Info.plist 里的 LSUIElement 只对 LaunchServices 的
@@ -251,7 +362,7 @@ pub fn run() {
             app.manage(state);
 
             // 回收无主图片文件：删除图片条目时为支持 ⌘Z 撤销而故意保留文件，
-            // 真正回收依赖启动时扫一遍（`~/.clipbase/data/files` 里的孤儿 PNG）。
+            // 真正回收依赖启动时扫一遍（`~/.halo/data/files` 里的孤儿 PNG）。
             // 要放在监控启动之前：此刻没有新图片写入，不存在「刚写盘还没入库就被删掉」的竞态。
             let pruned = history.prune_orphan_images();
             if pruned > 0 {
@@ -261,9 +372,8 @@ pub fn run() {
             let cfg = config.get();
             monitor.apply(tx, cfg.poll_interval_ms, cfg.monitor_enabled);
 
-            // 菜单栏图标取消后，「唤起面板」的快捷键就是唯一入口：注册失败必须
-            // 主动把设置弹出来，否则进程在后台跑着却怎么按都叫不出来。
-            // 快捷键设置页已下线，所以落到「通用」页（与面板齿轮同一入口）。
+            // 快捷键是剪贴板面板的主入口：注册失败必须主动把设置弹出来，
+            // 否则用户按不出面板也无从发现原因（状态栏图标是另一条入口）。
             let hotkey_report = hotkey.apply_with_report(&cfg);
             let toggle_failed = hotkey_report
                 .iter()
@@ -308,10 +418,21 @@ pub fn run() {
             if let Some(ring) = app.get_webview_window("ring") {
                 crate::window::allow_over_fullscreen(&ring);
             }
+            // 状态栏面板：与剪贴板面板同一套 HUD 材质与圆角，只是更窄。
+            if let Some(tray) = app.get_webview_window("traypanel") {
+                crate::window::apply_material(&tray, window::panel_material(), 12.0);
+                crate::window::allow_over_fullscreen(&tray);
+            }
             // 环形盘不垫材质：窗口里只该有扇区本身，垫了会多出一块灰色圆角底板。
 
-            // 不再创建菜单栏图标：ClipBase 是纯后台常驻应用，入口只有全局快捷键
-            // 唤出的面板，设置从面板右上角的齿轮进入（评审 E12）。
+            // 菜单栏图标：左键开合状态栏面板，右键菜单直达关于 / 设置 / 退出。
+            // 图标是按系统状态现画的三区模板图，之后由重画循环持续更新。
+            create_tray_icon(app, &cfg)?;
+            core::statusbar::tray::start(app_handle.clone(), config.clone());
+
+            // 输入法切换提示：订阅系统的分布式通知。setup 正在主线程，正好是
+            // CoreFoundation 通知回调与 TIS 读数唯一可用的线程。
+            core::statusbar::watch_input_source_changes(&app_handle);
 
             // Finder 右键：菜单由 Finder Sync 扩展直接放进右键菜单（不再走
             // 「服务」子菜单）。这里注册扩展并开始轮询扩展投递的动作请求。
@@ -340,6 +461,13 @@ pub fn run() {
                 tauri::WindowEvent::Focused(true) if label == "panel" => {
                     window::handle_panel_focus_gained();
                 }
+                // 状态栏面板失焦即收起（点图标 / 点外部）。
+                tauri::WindowEvent::Focused(false) if label == "traypanel" => {
+                    window::handle_tray_panel_focus_lost(window.app_handle());
+                }
+                tauri::WindowEvent::Focused(true) if label == "traypanel" => {
+                    window::handle_tray_panel_focus_gained();
+                }
                 // 环形盘失焦即取消（点外部/切走，任务 22）；转换中不作废已提交任务。
                 tauri::WindowEvent::Focused(false) if label == "ring" => {
                     crate::core::ring::RingManager::cancel();
@@ -348,12 +476,11 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building ClipBase")
+        .expect("error while building Halo")
         .run(|_app, _event| {
-            // 没有 Dock 图标、也没有菜单栏图标之后，「再点一次 App」就是用户手里
-            // 最后一条不需要记快捷键的入口：macOS 会先发 reopen（对应
-            // applicationShouldHandleReopen:），tao 自己不处理它，不接就会变成
-            // 「双击了图标，什么也没发生」。这里把主窗口请到前台。
+            // 再点一次 App（Finder / Spotlight）也是入口之一：macOS 会先发
+            // reopen（对应 applicationShouldHandleReopen:），tao 自己不处理它，
+            // 不接就会变成「双击了图标，什么也没发生」。这里把主窗口请到前台。
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
                 crate::window::show_main_window(_app);

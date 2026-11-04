@@ -1,13 +1,14 @@
 {
   "$schema": "gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for ClipBase windows (main / panel / ring)",
-  "windows": ["main", "panel", "ring"],
+  "description": "Capabilities for Halo windows (main / panel / ring / traypanel / imehud)",
+  "windows": ["main", "panel", "ring", "traypanel", "imehud"],
   "permissions": [
     "core:default",
     "core:window:default",
     "core:window:allow-hide",
     "core:event:default",
+    "core:event:allow-listen",
     "core:app:default",
     "core:menu:default",
     "global-shortcut:default"

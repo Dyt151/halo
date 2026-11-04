@@ -547,7 +547,7 @@ fn image_item(path: &str, width: u32, height: u32, created_at: i64) -> ClipItem 
 
 /// 生成一个临时 PNG 文件，返回其路径。
 fn temp_png() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("clipbase_qa_{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("halo_qa_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("img.png");
     image::RgbaImage::from_pixel(2, 3, image::Rgba([1, 2, 3, 255]))

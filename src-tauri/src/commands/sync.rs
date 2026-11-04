@@ -112,12 +112,12 @@ pub fn set_sync_settings(
             return Err(AppError::with_details(
                 3005,
                 "WebDAV 地址格式不正确",
-                "需要以 http:// 或 https:// 开头（例如 https://dav.example.com/clipbase）",
+                "需要以 http:// 或 https:// 开头（例如 https://dav.example.com/halo）",
             ));
         }
     }
     let remote_file = if input.remote_file.trim().is_empty() {
-        "clipbase-sync.json".to_string()
+        "halo-sync.json".to_string()
     } else {
         input.remote_file.trim().to_string()
     };

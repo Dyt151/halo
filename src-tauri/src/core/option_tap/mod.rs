@@ -12,7 +12,7 @@
 //!   文件拖拽，文件不会被拖去别处；松手事件照常放行，Finder 把它当成一次单击
 //!   （于是选中该文件）。
 //! - **载荷只看起手**：`mouseDown` 里同步调 `grab_start_file` 命中手指下的那个
-//!   文件，松手时不再复核。接管后移动事件被吞，Finder 的选中项已经不可信，
+//!   文件或文件夹，松手时不再复核。接管后移动事件被吞，Finder 的选中项已经不可信，
 //!   多选时再读一次只会把载荷从「起手那个文件」改成「一堆文件」。
 //! - 只在前台是 Finder 时接管；环形盘已经在屏上时不重复唤起。
 //!
@@ -107,7 +107,7 @@ pub struct GestureStatus {
     pub accessibility: bool,
     /// 事件监听线程是否真的建好了 tap
     pub tap_alive: bool,
-    /// 当前前台是否满足条件（Finder 或 ClipBase 自己）
+    /// 当前前台是否满足条件（Finder 或 Halo 自己）
     pub frontmost_ok: bool,
     /// 环形会话状态（idle / capturing / ready / converting …）
     pub state: String,
@@ -154,21 +154,21 @@ pub fn repair(bundle_id: &str) -> AxRepair {
     let (reset, mut detail) = match &output {
         Ok(o) if o.status.success() => (
             true,
-            format!("已清除 {bundle_id} 的旧授权记录。请在打开的系统设置里勾选 ClipBase：勾上后 3 秒内自动接管，无需重启。"),
+            format!("已清除 {bundle_id} 的旧授权记录。请在打开的系统设置里勾选 Halo：勾上后 3 秒内自动接管，无需重启。"),
         ),
         Ok(o) => (
             false,
             format!(
-                "清除旧记录失败（{}）。请在系统设置里先取消勾选 ClipBase、再重新勾选。",
+                "清除旧记录失败（{}）。请在系统设置里先取消勾选 Halo、再重新勾选。",
                 String::from_utf8_lossy(&o.stderr).trim()
             ),
         ),
         Err(e) => (
             false,
-            format!("无法执行 tccutil（{e}）。请在系统设置里先取消勾选 ClipBase、再重新勾选。"),
+            format!("无法执行 tccutil（{e}）。请在系统设置里先取消勾选 Halo、再重新勾选。"),
         ),
     };
-    // 重新登记（带 prompt）：列表里没有 ClipBase 时，用户连勾选入口都找不到。
+    // 重新登记（带 prompt）：列表里没有 Halo 时，用户连勾选入口都找不到。
     let trusted = crate::core::paste::request_accessibility_permission();
     if trusted {
         detail = "辅助功能已授权，手势会在 3 秒内自动接管。".to_string();
@@ -312,9 +312,13 @@ mod macos {
             }
             if !crate::core::paste::has_accessibility_permission() {
                 TAP_ALIVE.store(false, Ordering::SeqCst);
-                set_note(Some("缺少「辅助功能」权限：系统设置 → 隐私与安全性 → 辅助功能 里勾选 ClipBase"));
+                set_note(Some(
+                    "缺少「辅助功能」权限：系统设置 → 隐私与安全性 → 辅助功能 里勾选 Halo",
+                ));
                 if !warned {
-                    tracing::warn!("Option+拖动需要「辅助功能」权限，授权后会自动装上监听（不必重启）");
+                    tracing::warn!(
+                        "Option+拖动需要「辅助功能」权限，授权后会自动装上监听（不必重启）"
+                    );
                     warned = true;
                 }
             } else {
@@ -322,7 +326,9 @@ mod macos {
                 let tap = CGEventTapCreate(1, 0, 0, MASK, callback, std::ptr::null_mut());
                 if tap.is_null() {
                     TAP_ALIVE.store(false, Ordering::SeqCst);
-                    set_note(Some("事件监听创建失败：授权记录可能已失效，请点「修复授权」"));
+                    set_note(Some(
+                        "事件监听创建失败：授权记录可能已失效，请点「修复授权」",
+                    ));
                     if !warned {
                         tracing::warn!("创建 Option+拖动 监听失败（辅助功能权限不足？），稍后重试");
                         warned = true;
@@ -432,7 +438,7 @@ mod macos {
                 } else if displaying {
                     "环形盘已经在屏上"
                 } else {
-                    "前台不是 Finder（本手势只在 Finder 与 ClipBase 自己里生效）"
+                    "前台不是 Finder（本手势只在 Finder 与 Halo 自己里生效）"
                 };
                 set_note(Some(reason));
             }
@@ -449,10 +455,12 @@ mod macos {
         }
         let p = CGEventGetLocation(event);
         *ORIGIN.lock_ok() = Some((p.x, p.y));
-        // 起手点能确定不是文件（空白 / 工具栏 / 侧边栏 / 文件夹）：本次手势直接不成立。
+        // 起手点能确定不是文件也不是文件夹（空白 / 工具栏 / 侧边栏）：本次手势直接不成立。
         // 这就是验收项「非文件拖动不显示圆环」——不能先弹出盘再解释「没读到文件」。
         if !RingManager::grab_start_file(p.x, p.y) {
-            set_note(Some("起手点不是文件：请从文件图标上按下左键（空白、工具栏、文件夹都不行）"));
+            set_note(Some(
+                "起手点没有文件或文件夹：请从图标上按下左键（空白、工具栏、侧边栏都不算）",
+            ));
             idle();
             return;
         }

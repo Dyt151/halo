@@ -1,0 +1,32 @@
+Halo — status bar portions
+Copyright 2026 Halo contributors
+
+This product includes software developed as part of Status Trio.
+Status Trio
+Copyright 2026 lingyired
+
+Portions of Halo (the status bar panel design, and the menu-bar icon's
+geometry, colours and typography constants in src-tauri/src/core/statusbar/)
+are derived from Status Trio <https://github.com/lingyired/status-trio>,
+licensed under the Apache License, Version 2.0.
+
+Changes made to the original:
+- The menu-bar icon renderer was ported from Swift + CoreGraphics
+  (StatusIconGeometry.swift, StatusIconRenderer.swift) to Rust + core-graphics.
+- Line width and text size are fixed to a single preset instead of the
+  user-selectable 1.0–3.0 scales.
+- SF Symbol glyphs are replaced by equivalent vector paths drawn in code,
+  because the Rust side has no NSImage. This covers the centre connection
+  marks and the battery "plugged in, not charging" symbol
+  (powerplug.portrait.fill), whose outline was traced from a local raster of
+  the symbol at the same point size the original measures.
+- The PowerUI private-framework bridge (src-tauri/native/powerui/
+  PowerUIPrivateAPI.{h,m}) is a copy of Status Trio's ChargeToFullNow PowerUI
+  client, with one modification: after `enableMCL` resumes at macOS's own
+  default (80) instead of the limit captured before the override, the restore
+  path now falls through to the bounded `setMCLLimit:` fallback instead of
+  aborting, so cancellation restores the captured limit. A small C-ABI shim
+  (halo_powerui_shim.m) and the Rust state machine around it are Halo's own,
+  as are the Charge to Full Now row layout and copy.
+- The ring/volume/battery state machine, the polling loop, the tooltip text
+  and every setting exposed in the UI are Halo's own.

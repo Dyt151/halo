@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  ClipBase Finder Sync 扩展。
+  Halo Finder Sync 扩展。
 
-  这个 .appex 被打进 ClipBase.app/Contents/PlugIns/，由 Finder 托管。
+  这个 .appex 被打进 Halo.app/Contents/PlugIns/，由 Finder 托管。
   它只负责右键菜单和投递请求，实际文件操作在主程序执行。
 -->
 <plist version="1.0">
@@ -11,15 +11,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
-    <string>ClipBase Finder</string>
+    <string>Halo Finder</string>
     <key>CFBundleExecutable</key>
-    <string>ClipBaseFinderExtension</string>
+    <string>HaloFinderExtension</string>
     <key>CFBundleIdentifier</key>
-    <string>com.clipbase.app.FinderExtension</string>
+    <string>com.halo.desktop.FinderExtension</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>ClipBaseFinderExtension</string>
+    <string>HaloFinderExtension</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
     <key>CFBundleShortVersionString</key>
@@ -29,13 +29,13 @@
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2026 ClipBase contributors</string>
+    <string>Copyright © 2026 Halo contributors</string>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionPointIdentifier</key>
         <string>com.apple.FinderSync</string>
         <key>NSExtensionPrincipalClass</key>
-        <string>ClipBaseFinderSync</string>
+        <string>HaloFinderSync</string>
     </dict>
 </dict>
 </plist>

@@ -5,12 +5,12 @@ use crate::modules::manifest::{parse_manifest, Contribution, Lifecycle, ModuleRu
 
 const VALID: &str = r#"{
   "schema": 1,
-  "id": "com.clipbase.filee",
+  "id": "com.halo.filee",
   "name": "文件转换",
   "version": "0.1.0",
   "min_core": "0.1.0",
   "description": "示例模块",
-  "author": "clipbase-community",
+  "author": "halo-community",
   "runtime": "sidecar",
   "entry": { "backend": "bin/filee-cli", "ui": "index.html" },
   "permissions": ["clipboard:read", "clipboard:write"],
@@ -27,7 +27,7 @@ const VALID: &str = r#"{
 fn parses_valid_manifest() {
     let m = parse_manifest(VALID).unwrap();
     assert_eq!(m.schema, 1);
-    assert_eq!(m.id, "com.clipbase.filee");
+    assert_eq!(m.id, "com.halo.filee");
     assert_eq!(m.name, "文件转换");
     assert_eq!(m.version.to_string(), "0.1.0");
     assert_eq!(m.min_core.to_string(), "0.1.0");
@@ -68,13 +68,13 @@ fn rejects_unsupported_schema() {
 
 #[test]
 fn rejects_empty_id() {
-    let json = VALID.replace("com.clipbase.filee", "");
+    let json = VALID.replace("com.halo.filee", "");
     assert!(parse_manifest(&json).is_err());
 }
 
 #[test]
 fn rejects_id_without_dot() {
-    let json = VALID.replace("com.clipbase.filee", "filee");
+    let json = VALID.replace("com.halo.filee", "filee");
     assert!(parse_manifest(&json).is_err());
 }
 
@@ -84,13 +84,13 @@ fn rejects_id_without_dot() {
 fn rejects_path_traversal_module_id() {
     for evil in [
         "../../Documents",
-        "com.clipbase/../../x",
+        "com.halo/../../x",
         ".hidden.module",
         "/abs/path.module",
-        "com.clipbase.filee ",
-        "com..clipbase",
+        "com.halo.filee ",
+        "com..halo",
     ] {
-        let json = VALID.replace("com.clipbase.filee", evil);
+        let json = VALID.replace("com.halo.filee", evil);
         assert!(
             parse_manifest(&json).is_err(),
             "id 应被拒绝：{evil}"

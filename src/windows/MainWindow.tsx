@@ -69,6 +69,17 @@ const NAV: { key: MainPage; label: string; group: "功能" | "系统"; path: Rea
     ),
   },
   {
+    key: "statusbar",
+    label: "状态栏图标",
+    group: "功能",
+    path: (
+      <>
+        <rect x="3" y="4" width="18" height="14" rx="2" />
+        <path d="M8 21h8M12 18v3" />
+      </>
+    ),
+  },
+  {
     key: "sync",
     label: "同步",
     group: "系统",
@@ -135,6 +146,7 @@ function normalizeSection(raw: string | null | undefined): MainPage | null {
     case "clipboard":
     case "ring":
     case "context-menu":
+    case "statusbar":
     case "sync":
     case "backup":
     case "permissions":
@@ -251,7 +263,7 @@ export default function MainWindow() {
               </svg>
             </div>
             <div className="min-w-0 flex-1" data-tauri-drag-region>
-              <div className="truncate text-[13px]/[18px] font-semibold text-white">ClipBase 设置</div>
+              <div className="truncate text-[13px]/[18px] font-semibold text-white">Halo 设置</div>
               <div className="text-[11px]/[14px] text-white/45">{version ? `v${version}` : ""}</div>
             </div>
           </div>

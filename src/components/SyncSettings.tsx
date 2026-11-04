@@ -81,7 +81,7 @@ function validate(form: FormState): Record<string, string> {
     errors.remote_file = "只填文件名，不要带路径分隔符";
   }
   if (form.enabled && !file) {
-    errors.remote_file = "请填写远端文件名（如 clipbase-sync.json）";
+    errors.remote_file = "请填写远端文件名（如 halo-sync.json）";
   }
 
   const interval = form.interval.trim();
@@ -158,13 +158,13 @@ export default function SyncSettings() {
         password: password === null ? undefined : password,
         encryption: form.encryption,
         passphrase: passphrase === null ? undefined : passphrase,
-        remote_file: form.remote_file.trim() || "clipbase-sync.json",
+        remote_file: form.remote_file.trim() || "halo-sync.json",
         interval_secs: Number(form.interval),
       });
       markDirty(false);
       setPassword(null);
       setPassphrase(null);
-      // 后端会补默认文件名、钳制间隔（如留空→clipbase-sync.json）：
+      // 后端会补默认文件名、钳制间隔（如留空→halo-sync.json）：
       // 成功后以落库值为准回填表单，否则界面会与真实配置对不上。
       const saved = useClipStore.getState().config?.sync;
       if (saved) setForm(toForm(saved));
@@ -238,7 +238,7 @@ export default function SyncSettings() {
             <Input
               value={form.url}
               onChange={(e) => update({ url: e.target.value })}
-              placeholder="https://dav.example.com/remote.php/dav/files/me/clipbase"
+              placeholder="https://dav.example.com/remote.php/dav/files/me/halo"
               aria-invalid={Boolean(errors.url)}
             />
             {errors.url && <p className="mt-[4px] text-[12px] text-danger">{errors.url}</p>}
@@ -287,7 +287,7 @@ export default function SyncSettings() {
               <Input
                 value={form.remote_file}
                 onChange={(e) => update({ remote_file: e.target.value })}
-                placeholder="clipbase-sync.json"
+                placeholder="halo-sync.json"
                 aria-invalid={Boolean(errors.remote_file)}
               />
               {errors.remote_file && (

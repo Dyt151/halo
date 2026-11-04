@@ -24,7 +24,7 @@ pub(super) fn run_action(action: ServiceAction, selected: &[PathBuf], container:
 
     let Some(directory) = directory else {
         tracing::warn!("动作「{}」：没有可用的目标目录", action.menu_title());
-        notify("ClipBase", "未能识别要操作的文件夹");
+        notify("Halo", "未能识别要操作的文件夹");
         return;
     };
 
@@ -51,7 +51,7 @@ fn create_and_open(action: ServiceAction, directory: &Path) {
         }
         Err(err) => {
             tracing::error!("创建文件失败: {err}");
-            notify("ClipBase", &format!("创建文件失败：{err}"));
+            notify("Halo", &format!("创建文件失败：{err}"));
         }
     }
 }
@@ -119,7 +119,7 @@ mod tests {
 
     fn scratch_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "clipbase-services-{}-{name}",
+            "halo-services-{}-{name}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);

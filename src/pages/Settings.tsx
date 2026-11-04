@@ -13,6 +13,7 @@ import HotkeySettings from "../components/HotkeySettings";
 import PermissionCenter from "../components/PermissionCenter";
 import SyncSettings from "../components/SyncSettings";
 import BackupSettings from "../components/BackupSettings";
+import StatusBarSettings from "./StatusBarSettings";
 import RingSettings from "./RingSettings";
 import HistoryPage from "./HistoryPage";
 import type { MainPage } from "../lib/windows";
@@ -179,6 +180,8 @@ export default function Settings({ section }: { section: MainPage }) {
         return <HistoryPage />;
       case "context-menu":
         return <ContextMenuSettings />;
+      case "statusbar":
+        return <StatusBarSettings />;
       case "sync":
         return <SyncSettings />;
       case "backup":
@@ -574,12 +577,17 @@ function AboutSection() {
               <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
             </svg>
           </div>
-          <h3 className="mt-[12px] text-[17px]/[22px] font-semibold text-white">ClipBase</h3>
+          <h3 className="mt-[12px] text-[17px]/[22px] font-semibold text-white">Halo</h3>
           <p className="mt-[2px] text-[12px]/[16px] text-white/45">
             版本 {appInfo?.version || version || "—"}
           </p>
           <p className="mt-[12px] text-[13px]/[18px] text-white/60">
             一个开源、可扩展的 macOS 剪贴板管理器。
+          </p>
+          <p className="mt-[6px] text-[11px]/[16px] text-white/35">
+            状态栏面板与菜单栏图标的几何、配色取自 Status Trio（Apache-2.0，Copyright 2026
+            lingyired），已改写为 Rust + CoreGraphics 并调整了参数；完整许可见仓库根目录的
+            LICENSE-STATUS-TRIO.txt 与 NOTICE-STATUS-TRIO.txt。
           </p>
         </div>
 
@@ -630,7 +638,7 @@ function AboutSection() {
         <ul className="space-y-[8px] text-[12px]/[18px] text-white/60">
           <li>· 剪贴内容默认只存在本机 SQLite，不会上传到任何服务器。</li>
           <li>· 同步需你主动开启；密码与口令存在系统钥匙串，不写入配置文件。</li>
-          <li>· 富文本预览经过白名单消毒，图片/图标只能读 ~/.clipbase 内的文件。</li>
+          <li>· 富文本预览经过白名单消毒，图片/图标只能读 ~/.halo 内的文件。</li>
           <li>· 回贴依赖系统「辅助功能」权限，未授权时降级为仅复制。</li>
         </ul>
         <div className="mt-[12px] flex flex-wrap gap-[6px]">
@@ -643,13 +651,13 @@ function AboutSection() {
         </div>
       </CardGroup>
 
-      {/* 入口说明：ClipBase 没有 Dock 图标也没有菜单栏图标，用户很容易
-          找不到「怎么关掉它」，这里把后台形态、唤出方式与退出入口写清楚。 */}
+      {/* 入口说明：Halo 没有 Dock 图标，用户很容易找不到「怎么关掉它」，
+          这里把后台形态、唤出方式与退出入口写清楚。 */}
       <CardGroup title="后台运行">
         <ul className="space-y-[8px] text-[12px]/[18px] text-white/60">
-          <li>· ClipBase 不占 Dock、不驻菜单栏，关掉窗口只是隐藏，进程继续监听剪贴板。</li>
-          <li>· 需要时用快捷键（默认 ⌃⌥C）唤出剪贴板面板，面板右上角的齿轮就是本设置页。</li>
-          <li>· 要彻底停止，点下面的「退出 ClipBase」，或在任一窗口聚焦时按 ⌘Q。</li>
+          <li>· Halo 不占 Dock，关掉窗口只是隐藏，进程继续监听剪贴板。</li>
+          <li>· 菜单栏图标点开是系统状态面板；剪贴板面板用快捷键（默认 ⌃⌥C）唤出。</li>
+          <li>· 要彻底停止，点下面的「退出 Halo」，或在任一窗口聚焦时按 ⌘Q。</li>
         </ul>
         <div className="mt-[12px]">
           <Btn
@@ -658,8 +666,8 @@ function AboutSection() {
             onClick={() => {
               void (async () => {
                 if (
-                  !(await confirm("退出后不再监听剪贴板，需要时重新打开 ClipBase 即可。", {
-                    title: "退出 ClipBase",
+                  !(await confirm("退出后不再监听剪贴板，需要时重新打开 Halo 即可。", {
+                    title: "退出 Halo",
                     okLabel: "退出",
                     danger: true,
                   }))
@@ -671,7 +679,7 @@ function AboutSection() {
               })();
             }}
           >
-            退出 ClipBase
+            退出 Halo
           </Btn>
         </div>
       </CardGroup>

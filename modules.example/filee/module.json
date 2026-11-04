@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "id": "com.clipbase.filee",
+  "id": "com.halo.filee",
   "name": "文件转换",
   "version": "0.1.0",
   "min_core": "0.1.0",
   "description": "基于 filee 的本地文件转换工具示例模块",
-  "author": "clipbase-community",
+  "author": "halo-community",
   "runtime": "sidecar",
   "entry": {
     "backend": "bin/filee-cli",

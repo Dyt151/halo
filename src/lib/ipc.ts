@@ -23,6 +23,14 @@ import type {
   Capability,
   FinderIntegrationStatus,
   SyncCredentials,
+  StatusBarSnapshot,
+  StatusBarGlyphPreview,
+  StatusBarBatteryDetails,
+  StatusBarChargeToFullState,
+  StatusBarAudioLevels,
+  StatusBarWifiScan,
+  SystemPane,
+  AudioScope,
 } from "./types";
 
 /** 同步设置入参（与 Rust `SyncSettingsInput` 对齐；密码留空表示不改）。 */
@@ -124,7 +132,7 @@ export const api = {
   pickDirectory: () => invoke<string[]>("pick_directory"),
   /** 辅助功能是否已授权（回贴需要，未授权时降级为仅复制）。 */
   accessibilityStatus: () => invoke<boolean>("accessibility_status"),
-  /** 主动请求辅助功能授权：系统弹窗并把 ClipBase 加进白名单（只由按钮调用）。 */
+  /** 主动请求辅助功能授权：系统弹窗并把 Halo 加进白名单（只由按钮调用）。 */
   requestAccessibility: () => invoke<boolean>("request_accessibility"),
   /** 环形手势现场状态：开关/授权/监听/前台条件 + 最近一次没反应的原因。 */
   ringGestureStatus: () => invoke<GestureStatus>("ring_gesture_status"),
@@ -198,4 +206,49 @@ export const api = {
   ringCancel: () => invoke<void>("ring_cancel"),
   /** 结果动画播完后收起环形盘（原地成功/失败反馈结束）。 */
   ringDismiss: () => invoke<void>("ring_dismiss"),
+
+  // ---------- 状态栏（菜单栏图标 ↔ 下拉面板） ----------
+  /** 一次拉齐：输出/输入音量、电池、输入法、未接入能力。 */
+  statusBarState: () => invoke<StatusBarSnapshot>("statusbar_state"),
+  /** 菜单栏图标的实时预览（后端把同一张将要贴到菜单栏的图直接给前端）。 */
+  statusBarGlyphPreview: () => invoke<StatusBarGlyphPreview>("statusbar_glyph_preview"),
+  statusBarSetVolume: (scope: AudioScope, volume: number) =>
+    invoke<void>("statusbar_set_volume", { scope, volume }),
+  statusBarSetMute: (scope: AudioScope, muted: boolean) =>
+    invoke<void>("statusbar_set_mute", { scope, muted }),
+  statusBarSetDefaultDevice: (scope: AudioScope, deviceId: number) =>
+    invoke<void>("statusbar_set_default_device", { scope, deviceId }),
+  statusBarSelectInputSource: (id: string) =>
+    invoke<void>("statusbar_select_input_source", { id }),
+  statusBarSetWifi: (enabled: boolean) => invoke<void>("statusbar_set_wifi", { enabled }),
+  statusBarSetBluetooth: (enabled: boolean) =>
+    invoke<void>("statusbar_set_bluetooth", { enabled }),
+  /** 申请定位权限：授权后 macOS 才会返回 Wi-Fi 名称。正版返回三态结果。 */
+  statusBarRequestLocation: () =>
+    invoke<"requested" | "open_location_settings" | "not_needed">("statusbar_request_location"),
+  /** 电池详情页读数（打开页面后每 2 秒拉一次）。 */
+  statusBarBatteryDetails: () =>
+    invoke<StatusBarBatteryDetails>("statusbar_battery_details"),
+  /** 「立即充满电」的充电上限读数（面板可见时每 2 秒拉一次）。 */
+  statusBarChargeToFullState: () =>
+    invoke<StatusBarChargeToFullState>("statusbar_charge_to_full_state"),
+  /** 发起立即充满：解除充电上限，充到 100%。 */
+  statusBarChargeToFull: () => invoke<void>("statusbar_charge_to_full"),
+  /** 取消立即充满：恢复发起前记下的充电上限，返回恢复到的档位。 */
+  statusBarCancelChargeToFull: () =>
+    invoke<number>("statusbar_cancel_charge_to_full"),
+  /** Wi‑Fi 二级页读数：含一次全信道扫描（一秒上下），只在打开页面/点刷新时调。 */
+  statusBarWifiPage: () => invoke<StatusBarWifiScan>("statusbar_wifi_page"),
+  /** 面板可见时的轻量音量读数：让滑条跟随键盘/触控栏音量键。 */
+  statusBarAudioLevels: () => invoke<StatusBarAudioLevels>("statusbar_audio_levels"),
+  /** 音量提示音的系统总开关（`com.apple.sound.beep.feedback`，缺省即开）。 */
+  statusBarVolumeFeedbackEnabled: () => invoke<boolean>("statusbar_volume_feedback_enabled"),
+  /** 齿轮：打开 macOS 系统设置对应面板（不是 Halo 自己的设置）。 */
+  statusBarOpenPane: (pane: SystemPane) => invoke<void>("statusbar_open_pane", { pane }),
+  /** 收起面板（Esc / 执行动作后）。 */
+  statusBarHide: () => invoke<void>("statusbar_hide"),
+  /** 面板底部「设置…」：收起并打开主窗口的状态栏分区。 */
+  statusBarOpenSettings: () => invoke<void>("statusbar_open_settings"),
+  /** 前端按实际内容高度回报，窗口据此重新贴到图标下方。 */
+  statusBarResize: (height: number) => invoke<void>("statusbar_resize", { height }),
 };
