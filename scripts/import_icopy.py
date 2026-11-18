@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """把 iCopy 的剪贴板历史 / 快捷回复提取成 Halo 可导入的 JSON。
 
-iCopy 的数据布局（逆向结论，见 docs/REA-iCopy-Filee.md §1.3）：
+iCopy 的数据布局（逆向结论，见 README「引用与致谢」）：
 
 - `data.sqlite` 表 `t_data(id, pastetype, sourcetype, text, filepath, createtime, data, favorite)`
   - `pastetype`：0 = 纯文本，1 = 富文本，2 = 文件/图片
@@ -9,7 +9,7 @@ iCopy 的数据布局（逆向结论，见 docs/REA-iCopy-Filee.md §1.3）：
   - `data`：iCopy 自己的 `PasteModel`（NSKeyedArchiver），比表列多出
     `sourceAppName`（来源 App 名）与 `richText`（NSAttributedString），
     富文本的 HTML 原文藏在 `data` 字段里：它是 **Apple LZFSE 压缩流**
-    （Compression 框架，`bvx` 开头，详见 docs/HANDOFF-2026-10-26.md §3），
+    （Compression 框架，`bvx` 开头，详见 README「引用与致谢」），
     需经 libcompression 解压后再解析
   - `filepath`：iCopy 容器内的图片/文件绝对路径
 
@@ -88,7 +88,7 @@ def extract_html(data) -> str | None:
     """从 iCopy 的富文本数据里取出 HTML 原文（向后兼容的薄封装）。
 
     `data` 是 Apple LZFSE 压缩流（Compression 框架，`bvx` 开头的分块格式，
-    见 docs/HANDOFF-2026-10-26.md §3），先经 libcompression 解压再解析。
+    见 README「引用与致谢」），先经 libcompression 解压再解析。
     解压结果可能是 HTML 或 RTF（`{\\rtf` 开头，本脚本回落纯文本）。
 
     仅当 HTML 含有实际正文（去标签后非空、非空壳）时才返回，否则交由

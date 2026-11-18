@@ -7,7 +7,7 @@
 //!   （透明图转 JPG 按预设背景色合成、EXIF 摆正这些语义只在 ImageEngine 里有）；
 //! - 所以 sips 不声明 `heic → jpg` 直连边——JPG 没有 alpha，直连会把透明图
 //!   压成随机黑底。路由器会选 `heic → png → jpg` 两步，背景合成交给
-//!   ImageEngine（§5.1「绝不静默保真」）；PDF → JPG 同理，经 PNG 中转；
+//!   ImageEngine（Filee 行为「绝不静默保真」）；PDF → JPG 同理，经 PNG 中转；
 //! - 图片 → PDF：sips 把图嵌入单页 PDF（「图片转 PDF」预设就是它）；
 //! - PDF → 图片：sips 只读**第一页**，这条限制在警告里如实说，每页出图走
 //!   PDFKit 动作而不是边；

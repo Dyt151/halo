@@ -1,13 +1,13 @@
 /**
- * Finder 环形转换盘（总规范：docs/REA-Filee-Ring-Integrated.md）。
+ * Finder 环形转换盘（总规范：README「三、环形文件转换」）。
  *
  * 只有一面、只有一个手势：
- * - 环形盘由 Option＋左键拖动唤起，右半区只有**一面**（§4）：没有正/背面，
+ * - 环形盘由 Option＋左键拖动唤起，右半区只有**一面**（Filee 行为）：没有正/背面，
  *   没有 Tab/滚轮/自动换面，也没有翻面提示。
- * - 运行态不接受点击、Enter、方向键、Esc、滚轮（§3.1）：窗口在拖动期间
+ * - 运行态不接受点击、Enter、方向键、Esc、滚轮（Filee 行为）：窗口在拖动期间
  *   `ignore_cursor_events`，前端只从 `ring://pointer` 拿指针坐标、从
  *   `ring://drag-end` 拿松手 —— 这是一次拖动内完成的唯一通道。
- * - 不可用的扇区**保留原位**（§2.3）：不重排、不消失，只降低不透明度；
+ * - 不可用的扇区**保留原位**（Filee 行为）：不重排、不消失，只降低不透明度；
  *   hover 时中心显示原因，松手落在上面不执行，把原因留 1.3s 再收起。
  *
  * 几何沿用 Filee `DonutGeometry`（12 点起顺时针、3px 间隙、径向命中、
@@ -28,6 +28,7 @@ import {
   sectorPath,
 } from "../lib/ringGeometry";
 import { initialIndex, resolveRingDragEnd, ringCenterTitle } from "../lib/ringState";
+import { usePrefersReducedMotion } from "../lib/usePrefersReducedMotion";
 
 /** 与几何模块一致：窗口边长 = 2 × (R + 弹出预留 + 阴影预留)。 */
 const SIZE = RING_SIDE;
@@ -35,11 +36,11 @@ const C = SIZE / 2;
 const R = RING_GEOM.R;
 const r = innerRadius(R);
 const POP = RING_GEOM.popOut;
-/** hover 时扇区额外放大 2.5%（Wheel §1.3）。 */
+/** hover 时扇区额外放大 2.5%（Filee 行为）。 */
 const HOVER_SCALE = 1.025;
 /** 打开动画逐项延迟 0.028s。 */
 const OPEN_STAGGER = 28;
-/** 关闭动画逐项延迟 0.01s；总时长 = 160ms + 12 项 ≈ 270ms（Wheel §1.3）。 */
+/** 关闭动画逐项延迟 0.01s；总时长 = 160ms + 12 项 ≈ 270ms（Filee 行为）。 */
 const CLOSE_STAGGER = 10;
 const CLOSE_MS = 300;
 /** 落在禁用扇区上时，原因停留多久再收起。 */
@@ -75,12 +76,12 @@ const EV_POINTER = "ring://pointer";
 const EV_DRAG_END = "ring://drag-end";
 
 const ACCENT = "#e8a33d";
-/** 高亮填充最高 0.82 不透明度（Wheel §1.3：不盖住底下的阴影与毛玻璃）。 */
+/** 高亮填充最高 0.82 不透明度（Filee 行为：不盖住底下的阴影与毛玻璃）。 */
 const ACCENT_FILL = "rgba(232,163,61,0.82)";
 const ACCENT_ON = "#1b1408";
 const SUCCESS = "#34d399";
 const DANGER = "#f87171";
-/** 禁用扇区：0.55 倍扇区不透明度，看得出「有这一项」但按不下去（Wheel §1.3）。 */
+/** 禁用扇区：0.55 倍扇区不透明度，看得出「有这一项」但按不下去（Filee 行为）。 */
 const MUTED_FILL = "rgba(18,18,20,0.45)";
 const MUTED_TEXT = "rgba(255,255,255,0.42)";
 const REJECT_FILL = "rgba(248,113,113,0.16)";
@@ -110,7 +111,7 @@ export default function RingWindow() {
   const [snap, setSnap] = useState<RingSnapshot>(EMPTY_SNAPSHOT);
   const [active, setActive] = useState(0);
   const [centerHover, setCenterHover] = useState(false);
-  /** 指针在环外（NoDrop）：松手同样是取消，中心要如实说（§3.3）。 */
+  /** 指针在环外（NoDrop）：松手同样是取消，中心要如实说（Filee 行为）。 */
   const [noDrop, setNoDrop] = useState(false);
   /** 变一次就重播扇区动画（新会话）。 */
   const [animKey, setAnimKey] = useState(0);
@@ -122,14 +123,19 @@ export default function RingWindow() {
   const [collapsing, setCollapsing] = useState(false);
   /** 松手落在禁用扇区上的原因（临时占住中心）。 */
   const [rejected, setRejected] = useState<string | null>(null);
-  /** 没有命中可用扇区：先播关闭动画再关窗，避免“凭空消失”（Wheel §1.3）。 */
+  /** 没有命中可用扇区：先播关闭动画再关窗，避免“凭空消失”（Filee 行为）。 */
   const [closing, setClosing] = useState(false);
   /** 入场动画已放完（或页面不可见时直接置 true）：渲染不再挂动画类。 */
   const [still, setStill] = useState(true);
+  /** 系统「减弱动态效果」：取消展开错峰、收起位移与 hover 弹性。 */
+  const reduceMotion = usePrefersReducedMotion();
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   /** 入场动画容器：兜底逻辑要在定时器里读它的计算样式。 */
   const layerRef = useRef<HTMLDivElement | null>(null);
+  /** 事件闭包读不到最新渲染值，减弱动态开关用 ref 镜像。 */
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
   const resultSeenRef = useRef<number | null>(null);
   /**
    * 会话令牌：每应用一次新快照就自增。
@@ -195,18 +201,22 @@ export default function RingWindow() {
     setRejected(null);
     setClosing(false);
     // 页面不可见（窗口还没 show）时别演入场动画：动画会在隐藏的 webview 里
-    // 停在首帧，窗口显示后就变成一张全透明的盘。可见时正常演，并用定时器兜底：
-    // 到点检查容器透明度，仍然停在首帧就把动画类摘掉，强制落到最终状态。
-    const hidden = document.visibilityState !== "visible";
-    setStill(hidden);
+    // 停在首帧，窗口显示后就变成一张全透明的盘。减弱动态时同理，直接落最终态。
+    // 可见且允许动画时正常演，并用定时器兜底：到点检查容器透明度，仍然停在首帧
+    // 就把动画类摘掉，强制落到最终状态。
+    const skipMotion =
+      document.visibilityState !== "visible" || reduceMotionRef.current;
+    setStill(skipMotion);
     clearTimer(stillTimerRef);
-    stillTimerRef.current = window.setTimeout(() => {
-      stillTimerRef.current = null;
-      const layer = layerRef.current;
-      const opacity = layer ? Number(window.getComputedStyle(layer).opacity) : 1;
-      // 动画正常放完时是 1；被冻住的会停在首帧（0.6）。
-      if (!(opacity > 0.95)) setStill(true);
-    }, STILL_AFTER_MS);
+    if (!skipMotion) {
+      stillTimerRef.current = window.setTimeout(() => {
+        stillTimerRef.current = null;
+        const layer = layerRef.current;
+        const opacity = layer ? Number(window.getComputedStyle(layer).opacity) : 1;
+        // 动画正常放完时是 1；被冻住的会停在首帧（0.6）。
+        if (!(opacity > 0.95)) setStill(true);
+      }, STILL_AFTER_MS);
+    }
     // 新会话重新计数指针位移，避免沿用上一次的 hover 状态。
     armedRef.current = false;
     firstPosRef.current = null;
@@ -285,7 +295,7 @@ export default function RingWindow() {
     };
   }, [applySnapshot, pull]);
 
-  // 结果保持后收起：成功 0.9s、失败 1.4s，再加淡出时间（对齐 Filee §1.4）。
+  // 结果保持后收起：成功 0.9s、失败 1.4s，再加淡出时间（对齐 Filee）。
   useEffect(() => {
     if (!result) return;
     if (resultSeenRef.current === result.generation) return;
@@ -304,8 +314,9 @@ export default function RingWindow() {
       if (!action || !action.enabled || busy) return;
       setResult(null);
       startedRef.current = Date.now();
-      // 扇区先向中心收缩，收缩完再切进度环（对齐 Filee §1.4）。
+      // 扇区先向中心收缩，收缩完再切进度环（对齐 Filee）。
       setCollapsing(true);
+      const collapseMs = reduceMotionRef.current ? 0 : 280;
       const token = sessionTokenRef.current;
       clearTimer(collapseTimerRef);
       collapseTimerRef.current = window.setTimeout(() => {
@@ -317,7 +328,7 @@ export default function RingWindow() {
         setProgress({ generation: snap.generation, done: 0, total: action.convert + action.skip });
         setCollapsing(false);
         void api.ringExecute(action.id).catch(() => setProgress(null));
-      }, 280);
+      }, collapseMs);
     },
     [busy, snap.generation],
   );
@@ -330,19 +341,21 @@ export default function RingWindow() {
    * 松手没命中可用扇区：扇区逐项缩回（0.16s / 10ms 错峰）后再关窗。
    *
    * 直接隐藏会让「松手」和「界面凭空消失」在体感上分不清是取消还是没拖到，
-   * 而这一手势没有第二次机会解释（Wheel §1.3 关闭动画）。
+   * 而这一手势没有第二次机会解释（Filee 行为 关闭动画）。
    */
   const doClose = useCallback(() => {
     if (closing) return;
     setClosing(true);
     clearTimer(closeTimerRef);
     const token = sessionTokenRef.current;
+    // 减弱动态时没有可看的收起动画，立刻把窗口交还给宿主。
+    const closeMs = reduceMotionRef.current ? 0 : CLOSE_MS;
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
       if (sessionTokenRef.current !== token) return;
       void api.ringCancel().catch(() => {});
       setClosing(false);
-    }, CLOSE_MS);
+    }, closeMs);
   }, [closing]);
 
   /**
@@ -415,12 +428,14 @@ export default function RingWindow() {
   const activeAction = actions[activeIndex];
   const activeDisabled = activeAction !== undefined && !activeAction.enabled;
   /**
-   * 中心主标题：数量 + 格式（Wheel §1.3 A）。
+   * 中心主标题：数量 + 格式（Filee 行为 A）。
    *
    * 单一格式写「3 个 PNG」，同类混选写「3 张图片」，跨类才写混合——
    * 选了 20 张 PNG 还只写「图片」等于什么都没说。
    */
   const centerTitle = ringCenterTitle(snap.count, snap.category);
+  /** 减弱动态时取消 hover 的弹性位移与染色渐变。 */
+  const fillTransition = reduceMotion ? "none" : "fill 120ms ease";
 
   // 扇区：几何 path + 动画参数（活动扇区沿径向弹出并额外放大 2.5%）。
   const sectors = useMemo(
@@ -441,11 +456,11 @@ export default function RingWindow() {
           ang: (midAngle(i, n) * 180) / Math.PI,
           radialMid: (R + r) / 2,
           isActive,
-          delay: i * OPEN_STAGGER,
-          closeDelay: i * CLOSE_STAGGER,
+          delay: reduceMotion ? 0 : i * OPEN_STAGGER,
+          closeDelay: reduceMotion ? 0 : i * CLOSE_STAGGER,
         };
       }),
-    [actions, activeIndex, centerHover, n],
+    [actions, activeIndex, centerHover, n, reduceMotion],
   );
 
   return (
@@ -481,16 +496,18 @@ export default function RingWindow() {
                   key={`${s.action.id}-${animKey}`}
                   transform={`translate(${C} ${C}) scale(${s.isActive ? HOVER_SCALE : 1}) translate(${-C} ${-C}) translate(${s.tx.toFixed(2)} ${s.ty.toFixed(2)})`}
                   style={{
-                    // hover 弹出走弹簧曲线（Wheel §1.3：320 刚度 20 阻尼的
+                    // hover 弹出走弹簧曲线（Filee 行为：320 刚度 20 阻尼的
                     // overshoot 手感，用 back-out 贝塞尔近似）。
-                    transition: "transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+                    transition: reduceMotion
+                      ? "none"
+                      : "transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1)",
                   }}
                 >
                   <g
                     className={closing ? "ring-sector-out" : still ? undefined : "ring-sector-in"}
                     style={{
                       animationDelay: `${closing ? s.closeDelay : s.delay}ms`,
-                      /* 绕圆心缩放：Wheel §1.3「从中心缩放并带轻微旋转」。 */
+                      /* 绕圆心缩放：Filee 行为「从中心缩放并带轻微旋转」。 */
                       transformOrigin: `${C}px ${C}px`,
                     }}
                   >
@@ -500,7 +517,7 @@ export default function RingWindow() {
                       stroke={s.isActive ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.08)"}
                       strokeWidth={1}
                       strokeLinejoin="round"
-                      style={{ transition: "fill 120ms ease" }}
+                      style={{ transition: fillTransition }}
                     >
                       {/* 禁用原因同时做原生 tooltip：中心被占住时仍能查。 */}
                       {!enabled && <title>{s.action.disabled_reason ?? "这批文件用不上它"}</title>}
@@ -518,7 +535,7 @@ export default function RingWindow() {
                           fontSize={radialFontSize(sectors.length)}
                           fontWeight={s.isActive ? 600 : 500}
                           fill={text}
-                          style={{ pointerEvents: "none", transition: "fill 120ms ease" }}
+                          style={{ pointerEvents: "none", transition: fillTransition }}
                         >
                           {s.action.label}
                         </text>
@@ -531,7 +548,7 @@ export default function RingWindow() {
                             dominantBaseline="middle"
                             fontSize={8}
                             fill="rgba(255,255,255,0.45)"
-                            style={{ pointerEvents: "none", transition: "fill 120ms ease" }}
+                            style={{ pointerEvents: "none", transition: fillTransition }}
                           >
                             {s.action.convert + s.action.skip} 个
                           </text>
@@ -547,7 +564,7 @@ export default function RingWindow() {
                           fontSize={11}
                           fontWeight={s.isActive ? 600 : 500}
                           fill={text}
-                          style={{ pointerEvents: "none", transition: "fill 120ms ease" }}
+                          style={{ pointerEvents: "none", transition: fillTransition }}
                         >
                           {s.action.label}
                         </text>
@@ -560,7 +577,7 @@ export default function RingWindow() {
                             dominantBaseline="middle"
                             fontSize={8}
                             fill="rgba(255,255,255,0.45)"
-                            style={{ pointerEvents: "none", transition: "fill 120ms ease" }}
+                            style={{ pointerEvents: "none", transition: fillTransition }}
                           >
                             {s.action.convert + s.action.skip} 个
                           </text>
@@ -573,14 +590,14 @@ export default function RingWindow() {
             })}
           </svg>
 
-          {/* 中心：数量+格式 / 松手转为 X / 松手取消（Wheel §1.3、Integrated §4.2）。 */}
+          {/* 中心：数量+格式 / 松手转为 X / 松手取消（Filee 行为）。 */}
           <div
             className={`pointer-events-none absolute left-1/2 top-1/2 grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-center ${closing ? "ring-center-out" : ""}`}
             style={{
               width: r * 2 - 12,
               height: r * 2 - 12,
               background: centerHover ? "rgba(248,113,113,0.16)" : "rgba(0,0,0,0.35)",
-              transition: "background 120ms ease",
+              transition: reduceMotion ? "none" : "background 120ms ease",
             }}
           >
             {centerHover || noDrop ? (
@@ -647,7 +664,7 @@ export default function RingWindow() {
   );
 }
 
-/** 原地进度环 + 成功/失败反馈（对齐 Filee §1.4）。 */
+/** 原地进度环 + 成功/失败反馈（对齐 Filee）。 */
 function ProgressOverlay({
   progress,
   result,
@@ -659,6 +676,7 @@ function ProgressOverlay({
 }) {
   const PR = 36; // 进度环半径（文档：36px / 线宽 6px）。
   const STROKE = 6;
+  const reduceMotion = usePrefersReducedMotion();
   const circ = 2 * Math.PI * PR;
   const total = progress?.total ?? 0;
   const done = progress?.done ?? 0;
@@ -685,7 +703,11 @@ function ProgressOverlay({
               strokeDasharray={circ}
               strokeDashoffset={result ? 0 : circ * (1 - ratio)}
               transform="rotate(-90)"
-              style={{ transition: "stroke-dashoffset 220ms ease, stroke 160ms ease" }}
+              style={{
+                transition: reduceMotion
+                  ? "none"
+                  : "stroke-dashoffset 220ms ease, stroke 160ms ease",
+              }}
             />
           </g>
         </svg>

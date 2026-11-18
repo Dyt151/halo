@@ -44,6 +44,12 @@ pub fn list_tags(state: State<'_, AppState>) -> CommandResult<Vec<String>> {
     state.history.tags()
 }
 
+/// 系统「降低透明度」是否开启（前端首帧据此决定用不用实色表面）。
+#[tauri::command]
+pub fn reduce_transparency() -> bool {
+    crate::window::reduce_transparency()
+}
+
 /// 退出 Halo。
 ///
 /// 菜单栏图标右键菜单里有「退出」，设置页「关于」也保留一个按钮指向这里，

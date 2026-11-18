@@ -45,7 +45,7 @@ export default function StatusBar() {
   const countText = filtered ? `${items.length} / ${stats.total} 条` : `${stats.total} 条`;
 
   return (
-    <footer className="flex h-[36px] shrink-0 items-center gap-[10px] border-t border-white/[0.06] px-[16px] text-[12px]/[16px] text-white/45">
+    <footer className="flex h-[24px] shrink-0 items-center gap-[8px] border-t border-white/[0.06] px-[12px] text-[11px]/[14px] text-white/45">
       <span className="tabular-nums">{countText}</span>
       <span className="tabular-nums">{formatSize(stats.total_bytes)}</span>
 
@@ -74,10 +74,10 @@ export default function StatusBar() {
         </span>
       )}
 
-      <span className="ml-auto shrink-0">{syncText}</span>
+      <span className="ml-auto shrink-0 max-[560px]:hidden">{syncText}</span>
       {/* 同步状态与快捷键之间加分隔：避免让人以为快捷键是同步开关。 */}
-      <span className="h-[12px] w-px shrink-0 bg-white/[0.12]" aria-hidden />
-      <span className="flex shrink-0 items-center gap-[6px] whitespace-nowrap" title="唤起面板的全局快捷键">
+      <span className="h-[10px] w-px shrink-0 bg-white/[0.12] max-[560px]:hidden" aria-hidden />
+      <span className="flex shrink-0 items-center gap-[5px] whitespace-nowrap max-[560px]:hidden" title="唤起面板的全局快捷键">
         <span className="text-white/40">面板</span>
         <Kbd>{config?.hotkeys.toggle ?? "Control+Option+C"}</Kbd>
       </span>

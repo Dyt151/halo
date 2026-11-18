@@ -5,9 +5,11 @@
  * （外环=电量、中心=网络、底部=输出音量），面板里显示哪些模块、拖拽排序、
  * 面板滚动调音量。已接入电池 / 网络 / 蓝牙 / 音量 / 声音输入 / 输入法；VPN 与
  * 私有能力（AirPods 降噪、充电上限、iPhone 电量）在这里显式标「即将支持」，
- * 不做假开关。
+ * 不做假开关。另外代管第三方「无线麦 SayAll」的入口：它自己只在菜单栏占一只图标，
+ * Halo 这边给一个直接进它的按钮；隐藏那只图标的开关要 SayAll 2.0.0 起才有，旧版本
+ * 只能退出它（图标随之消失），界面上按版本分两种给法，不给点了没反应的假开关。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useClipStore } from "../store/useClipStore";
 import { api } from "../lib/ipc";
 import { toastError } from "../lib/toast";
@@ -15,16 +17,15 @@ import type {
   GlyphAppearance,
   GlyphCenter,
   GlyphVolumeStyle,
-  StatusBarCapability,
+  SayAllState,
   StatusBarConfig,
   StatusBarGlyphPreview,
   StatusBarSection,
 } from "../lib/types";
 import {
+  Btn,
   CardGroup,
   Divider,
-  Notice,
-  Pill,
   Row,
   SelectRow,
   Switch,
@@ -45,12 +46,20 @@ const MODULES: Record<StatusBarSection, ModuleMeta> = {
   audio_input: { label: "声音输入", hint: "麦克风音量与静音", available: true },
   input_source: { label: "输入法", hint: "当前输入法，点击切换", available: true },
   network: { label: "网络", hint: "Wi-Fi 开关、连接状态与 IP", available: true },
-  vpn: { label: "VPN", hint: "VPN 连接状态（只读）", available: false },
+  vpn: { label: "VPN", hint: "代理接管开关、模式与节点延迟", available: true },
   bluetooth: { label: "蓝牙", hint: "蓝牙开关与已连接设备电量", available: true },
 };
 
-const AVAILABLE: StatusBarSection[] = ["battery", "network", "bluetooth", "volume", "audio_input", "input_source"];
-const UPCOMING: StatusBarSection[] = ["vpn"];
+/** 与 Rust `STATUSBAR_AVAILABLE_SECTIONS` 同序：这一栏决定「全选」给到什么。 */
+const AVAILABLE: StatusBarSection[] = [
+  "battery",
+  "network",
+  "vpn",
+  "bluetooth",
+  "volume",
+  "audio_input",
+  "input_source",
+];
 
 const CENTER_OPTIONS: { value: GlyphCenter; label: string }[] = [
   { value: "auto", label: "自动" },
@@ -77,7 +86,13 @@ const VOLUME_STYLE_OPTIONS: { value: GlyphVolumeStyle; label: string }[] = [
  * 因此不可能长得不一样。彩色模式下 RGB 已经带好电池色与墨色，直接贴；模板模式
  * 下只有 alpha 承载信息，系统会按菜单栏明暗反色，预览就照 `dark_bar` 补一次墨色。
  */
-function GlyphPreview({ preview }: { preview: StatusBarGlyphPreview | null }) {
+function GlyphPreview({
+  preview,
+  enabled,
+}: {
+  preview: StatusBarGlyphPreview | null;
+  enabled: boolean;
+}) {
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -115,31 +130,70 @@ function GlyphPreview({ preview }: { preview: StatusBarGlyphPreview | null }) {
     );
 
   return (
-    <div className="mb-[14px] flex items-end gap-[14px]">
-      <div className="flex flex-col items-center gap-[5px]">
-        <div className={cx("flex h-[24px] w-[168px] items-center justify-end gap-[7px] rounded-t-[6px] px-[7px]", strip)}>
-          <span className={cx("mr-auto text-[10px] leading-none", preview?.dark_bar ? "text-white/45" : "text-black/40")}>
-            剪贴板 · 菜单栏
-          </span>
-          {icon(18)}
+    <div
+      className={cx(
+        "rounded-[8px] border border-white/[0.06] bg-white/[0.03] p-[14px] transition-opacity duration-150",
+        !enabled && "opacity-45",
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-x-[18px] gap-y-[12px]">
+        <div className="flex flex-col items-center gap-[6px]">
+          <div className={cx("flex h-[24px] w-[168px] items-center justify-end gap-[7px] rounded-[5px] px-[8px]", strip)}>
+            <span className={cx("mr-auto text-[10px] leading-none", preview?.dark_bar ? "text-white/45" : "text-black/40")}>
+              剪贴板 · 菜单栏
+            </span>
+            {icon(18)}
+          </div>
+          <span className="text-[10px]/[12px] text-white/35">真实大小</span>
         </div>
-        <span className="text-[11px]/[14px] text-white/35">真实大小</span>
-      </div>
-      <div className="flex flex-col items-center gap-[5px]">
-        <div className={cx("flex h-[64px] w-[64px] items-center justify-center rounded-[8px]", strip)}>
-          {icon(48)}
+        <div className="flex flex-col items-center gap-[6px]">
+          <div className={cx("flex h-[56px] w-[56px] items-center justify-center rounded-[8px]", strip)}>
+            {icon(42)}
+          </div>
+          <span className="text-[10px]/[12px] text-white/35">放大</span>
         </div>
-        <span className="text-[11px]/[14px] text-white/35">放大</span>
-      </div>
-      <div className="min-w-0 flex-1 pb-[19px]">
-        <div className="truncate text-[12px]/[16px] text-white/70">
-          {preview?.tooltip ?? "读取系统状态中…"}
-        </div>
-        <div className="mt-[2px] text-[11px]/[15px] text-white/35">
-          鼠标停在菜单栏图标上就是这句话；数值每两秒刷新一次。
+        <div className="min-w-[180px] flex-1">
+          <div className="text-[12px]/[17px] text-white/70">
+            {preview?.tooltip ?? "读取系统状态中…"}
+          </div>
+          <div className="mt-[3px] text-[11px]/[15px] text-white/35">
+            鼠标悬停提示 · 每两秒刷新
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+/** 默认折叠的高级项：只调一次的开关不该占据首屏。 */
+function Disclosure({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group rounded-[10px] bg-group">
+      <summary className="flex cursor-pointer list-none items-center gap-[8px] rounded-[10px] px-[16px] py-[13px] outline-none transition-colors duration-120 hover:bg-white/[0.03] [&::-webkit-details-marker]:hidden">
+        <svg
+          viewBox="0 0 24 24"
+          className="h-[13px] w-[13px] shrink-0 text-white/35 transition-transform duration-150 group-open:rotate-90"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M9 6l6 6-6 6" />
+        </svg>
+        <span className="text-[13px]/[18px] font-semibold text-white">{title}</span>
+        <span className="ml-auto text-[11px]/[14px] text-white/35">{hint}</span>
+      </summary>
+      <div className="border-t border-white/[0.06] px-[16px] pb-[16px] pt-[10px]">{children}</div>
+    </details>
   );
 }
 
@@ -149,8 +203,11 @@ export default function StatusBarSettings() {
   const statusbar = config?.statusbar;
   const [rows, setRows] = useState<StatusBarSection[]>([]);
   const [dragging, setDragging] = useState<StatusBarSection | null>(null);
-  const [capabilities, setCapabilities] = useState<StatusBarCapability[]>([]);
   const [preview, setPreview] = useState<StatusBarGlyphPreview | null>(null);
+  /** 无线麦 SayAll（第三方 App）：没装时整块卡片不出现。 */
+  const [sayall, setSayall] = useState<SayAllState | null>(null);
+  /** 改它的菜单栏开关会连带重启它，这期间不许连点。 */
+  const [sayallBusy, setSayallBusy] = useState(false);
   /** 每个模块最后一次出现的位置，用于关掉再打开时插回原位。 */
   const lastIndex = useRef<Partial<Record<StatusBarSection, number>>>({});
 
@@ -173,6 +230,45 @@ export default function StatusBarSettings() {
     [statusbar],
   );
 
+  // SayAll 是另一个 App，读数不在 Halo 自己的状态里：进这一页时查一次。
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .sayAllState()
+      .then((state) => {
+        if (!cancelled) setSayall(state);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const openSayAll = () => {
+    api
+      .sayAllOpen()
+      .then(setSayall)
+      .catch((e) => toastError(e, "打不开无线麦 SayAll"));
+  };
+
+  const setSayAllStatusBar = (visible: boolean) => {
+    setSayallBusy(true);
+    api
+      .sayAllSetStatusBar(visible)
+      .then(setSayall)
+      .catch((e) => toastError(e, "改 SayAll 的菜单栏图标失败"))
+      .finally(() => setSayallBusy(false));
+  };
+
+  const quitSayAll = () => {
+    setSayallBusy(true);
+    api
+      .sayAllQuit()
+      .then(setSayall)
+      .catch((e) => toastError(e, "没能退出无线麦 SayAll"))
+      .finally(() => setSayallBusy(false));
+  };
+
   // 本地顺序只在拖动时领先于配置；其它窗口改配置后以配置为准。
   // 未勾选的模块也留在列表里（排到已勾选项之后），否则取消勾选后就再也点不回来。
   useEffect(() => {
@@ -184,13 +280,6 @@ export default function StatusBarSettings() {
     });
     setRows(next);
   }, [statusbar, dragging]);
-
-  useEffect(() => {
-    void api
-      .statusBarState()
-      .then((s) => setCapabilities(s.capabilities))
-      .catch(() => setCapabilities([]));
-  }, []);
 
   const save = (next: Partial<StatusBarConfig>) => {
     if (!statusbar) return;
@@ -243,116 +332,26 @@ export default function StatusBarSettings() {
 
   return (
     <div className="space-y-[16px]">
-      <CardGroup title="菜单栏图标" subtitle="点图标弹出系统状态面板，右键可直达设置与退出">
-        <ToggleRow
-          label="显示状态栏图标"
-          hint="关闭后菜单栏图标立即消失；剪贴板快捷键不受影响"
-          checked={statusbar.enabled}
-          onChange={(v) => save({ enabled: v })}
-        />
-      </CardGroup>
-
-      <CardGroup
-        title="图标内容"
-        subtitle="一张图标说三件事：外环=电量，中心=网络，底部=输出音量"
-      >
-        <GlyphPreview preview={preview} />
-        <div className="space-y-[2px]">
+      <CardGroup>
+        <GlyphPreview preview={preview} enabled={statusbar.enabled} />
+        <div className="mt-[14px] space-y-[2px]">
+          <ToggleRow
+            label="显示状态栏图标"
+            checked={statusbar.enabled}
+            onChange={(v) => save({ enabled: v })}
+          />
+          <Divider />
           <SelectRow
             label="中心图形"
-            hint="自动：有网络就按类型画（iPhone 热点 / 有线 / 临时 / 共享 / Wi-Fi），其次蓝牙，都没有用剪贴板标识"
             value={statusbar.glyph_center}
             options={CENTER_OPTIONS}
             onChange={(v) => save({ glyph_center: v as GlyphCenter })}
             width="w-[120px]"
           />
-          <Divider />
-          <ToggleRow
-            label="外环显示电量"
-            hint="按电量填充，低于 20% 换成红色；台式机没有电池会自动不画"
-            checked={statusbar.glyph_battery_ring}
-            onChange={(v) => save({ glyph_battery_ring: v })}
-          />
-          <Divider />
-          <ToggleRow
-            label="缺口里写电量数字"
-            hint="数字坐在环顶缺口；充电时缺口只留一枚闪电，接电源没在充时换成插头，两种都不写数字"
-            checked={statusbar.glyph_battery_percent}
-            onChange={(v) => save({ glyph_battery_percent: v })}
-          />
-          <Divider />
-          <ToggleRow
-            label="底部显示音量"
-            hint="4 档对应输出音量，静音时全部转淡"
-            checked={statusbar.glyph_volume}
-            onChange={(v) => save({ glyph_volume: v })}
-          />
-          <SelectRow
-            label="音量指示样式"
-            hint="选择在状态环底部显示为四个离散点还是连续圆弧条"
-            value={statusbar.glyph_volume_style}
-            options={VOLUME_STYLE_OPTIONS}
-            onChange={(v) => save({ glyph_volume_style: v as GlyphVolumeStyle })}
-            width="w-[120px]"
-          />
-          <Divider />
-          <ToggleRow
-            label="彩色图标"
-            hint="只给电量弧上色：绿=充电、红=低于 20%，其余情况和数字、中心图形一样都是墨色"
-            checked={statusbar.glyph_colored}
-            onChange={(v) => save({ glyph_colored: v })}
-          />
-          <SelectRow
-            label="菜单栏明暗"
-            hint="仅彩色图标生效：决定下白墨还是黑墨；不确定就选跟随系统"
-            value={statusbar.glyph_appearance}
-            options={APPEARANCE_OPTIONS}
-            onChange={(v) => save({ glyph_appearance: v as GlyphAppearance })}
-            width="w-[130px]"
-          />
         </div>
-        <div className="px-[4px] pb-[2px] pt-[14px]">
-          <p className="text-[12px]/[16px] font-medium text-white/70">连接图标样式</p>
-          <p className="mt-[2px] text-[11px]/[15px] text-white/40">
-            启用后，对应状态改用普通 Wi‑Fi 信号图标，不再显示其专用标记。
-          </p>
-        </div>
-        <div className="space-y-[2px]">
-          <ToggleRow
-            label="有线连接使用 Wi‑Fi 图标"
-            hint="默认画双折线加三个触点的 RJ45 插头"
-            checked={statusbar.glyph_wifi_for_ethernet}
-            onChange={(v) => save({ glyph_wifi_for_ethernet: v })}
-          />
-          <Divider />
-          <ToggleRow
-            label="个人热点使用 Wi‑Fi 图标"
-            hint="默认画两枚互扣的链环，一眼看出是手机热点"
-            checked={statusbar.glyph_wifi_for_hotspot}
-            onChange={(v) => save({ glyph_wifi_for_hotspot: v })}
-          />
-          <Divider />
-          <ToggleRow
-            label="临时连接使用 Wi‑Fi 图标"
-            hint="默认把 Wi‑Fi 外弧收成实心扇形，再抠掉一台小显示器"
-            checked={statusbar.glyph_wifi_for_temporary}
-            onChange={(v) => save({ glyph_wifi_for_temporary: v })}
-          />
-          <Divider />
-          <ToggleRow
-            label="互联网共享使用 Wi‑Fi 图标"
-            hint="默认把 Wi‑Fi 外弧收成实心扇形，再抠掉一支向下的箭头"
-            checked={statusbar.glyph_wifi_for_sharing}
-            onChange={(v) => save({ glyph_wifi_for_sharing: v })}
-          />
-        </div>
-        <Notice tone="info" className="mt-[12px]">
-          彩色模式下图标自己按菜单栏明暗选墨色；关掉彩色就退回模板图，由系统反色。
-          两种模式下，转淡的弧线/圆点都表示「这一档没有」，不是没画。
-        </Notice>
       </CardGroup>
 
-      <CardGroup title="面板显示项目" subtitle="勾选要显示的模块，拖动调整上下顺序">
+      <CardGroup title="面板显示项目">
         <div className="space-y-[2px]">
           {enabled.size === 0 && (
             <p className="py-[8px] text-[12px]/[16px] text-white/45">
@@ -396,9 +395,6 @@ export default function StatusBarSettings() {
                 >
                   {MODULES[id].label}
                 </div>
-                <div className="mt-[1px] text-[12px]/[16px] text-white/45">
-                  {MODULES[id].hint}
-                </div>
               </div>
               <Switch
                 checked={enabled.has(id)}
@@ -408,93 +404,112 @@ export default function StatusBarSettings() {
             </div>
           ))}
         </div>
-
-        <Divider className="my-[10px]" />
-
-        <p className="mb-[6px] text-[11px]/[14px] font-semibold uppercase tracking-wide text-white/35">
-          即将支持
-        </p>
-        <div className="space-y-[2px]">
-          {UPCOMING.map((id) => (
-            <Row
-              key={id}
-              label={
-                <span className="flex items-center gap-[6px]">
-                  {MODULES[id].label}
-                  <Pill className="pointer-events-none h-[18px] px-[6px] text-[10px]">
-                    后续
-                  </Pill>
-                </span>
-              }
-              hint={MODULES[id].hint}
-            >
-              <Switch checked={false} disabled onChange={() => {}} label={MODULES[id].label} />
-            </Row>
-          ))}
-        </div>
       </CardGroup>
 
-      <CardGroup title="面板交互" subtitle="在面板空白处滚动滚轮即可调音量">
+      {sayall?.installed && (
+        <CardGroup
+          title="无线麦 SayAll"
+          subtitle={`第三方 App${sayall.version ? ` ${sayall.version}` : ""} · ${
+            sayall.running ? "正在运行" : "没在运行"
+          }`}
+        >
+          <Row label="打开 SayAll" hint="没在运行时启动它，在跑时直接把它的窗口带到前台">
+            <Btn size="sm" onClick={openSayAll}>
+              打开
+            </Btn>
+          </Row>
+          <Divider />
+          {sayall.status_bar_icon_supported ? (
+            <ToggleRow
+              label="在菜单栏显示它的图标"
+              hint="关掉后右上角不再挂它，改由 Halo 面板「声音输入」里进；改这一项会重启 SayAll"
+              checked={sayall.status_bar_visible}
+              disabled={sayallBusy}
+              onChange={setSayAllStatusBar}
+            />
+          ) : (
+            <Row
+              label="退出 SayAll"
+              hint="这个版本里没有「隐藏菜单栏图标」的设置，图标是无条件画的；退出它右上角就干净了，要用时点上面「打开」"
+            >
+              <Btn size="sm" onClick={quitSayAll} disabled={!sayall.running || sayallBusy}>
+                退出
+              </Btn>
+            </Row>
+          )}
+        </CardGroup>
+      )}
+
+      <Disclosure title="高级设置" hint="图标细节、连接图标">
         <div className="space-y-[2px]">
           <ToggleRow
-            label="滚轮调节音量"
-            hint="光标在面板上滚动时直接调节音量，不滚动列表"
-            checked={statusbar.scroll_adjusts_volume}
-            onChange={(v) => save({ scroll_adjusts_volume: v })}
+            label="外环显示电量"
+            checked={statusbar.glyph_battery_ring}
+            onChange={(v) => save({ glyph_battery_ring: v })}
           />
           <Divider />
+          <ToggleRow
+            label="缺口里写电量数字"
+            checked={statusbar.glyph_battery_percent}
+            onChange={(v) => save({ glyph_battery_percent: v })}
+          />
+          <Divider />
+          <ToggleRow
+            label="底部显示音量"
+            checked={statusbar.glyph_volume}
+            onChange={(v) => save({ glyph_volume: v })}
+          />
           <SelectRow
-            label="调节方向"
-            hint="滚轮作用于哪个设备的音量"
-            value={statusbar.scroll_scope}
-            options={[
-              { value: "output", label: "输出音量" },
-              { value: "input", label: "输入音量" },
-            ]}
-            onChange={(v) => save({ scroll_scope: v as "output" | "input" })}
+            label="音量指示样式"
+            value={statusbar.glyph_volume_style}
+            options={VOLUME_STYLE_OPTIONS}
+            onChange={(v) => save({ glyph_volume_style: v as GlyphVolumeStyle })}
             width="w-[120px]"
           />
           <Divider />
           <ToggleRow
-            label="反转滚轮方向"
-            hint="开启后向上滚动为降低音量（自然滚动手感）"
-            checked={statusbar.scroll_natural}
-            onChange={(v) => save({ scroll_natural: v })}
+            label="彩色图标"
+            checked={statusbar.glyph_colored}
+            onChange={(v) => save({ glyph_colored: v })}
+          />
+          <SelectRow
+            label="菜单栏明暗"
+            value={statusbar.glyph_appearance}
+            options={APPEARANCE_OPTIONS}
+            onChange={(v) => save({ glyph_appearance: v as GlyphAppearance })}
+            width="w-[130px]"
           />
         </div>
-      </CardGroup>
 
-      <CardGroup title="尚未接入" subtitle="需要私有框架或 root 守护进程，先保留接口">
-        {capabilities.length === 0 ? (
-          <p className="text-[12px]/[16px] text-white/45">当前版本没有额外能力待接入。</p>
-        ) : (
-          <div className="space-y-[8px]">
-            {capabilities.map((cap) => (
-              <div
-                key={cap.id}
-                className="flex items-start justify-between gap-[12px] rounded-[6px] bg-black/[0.12] px-[10px] py-[8px]"
-              >
-                <div className="min-w-0">
-                  <div className="text-[13px]/[18px] text-white/80">{cap.name}</div>
-                  {cap.reason && (
-                    <div className="mt-[2px] text-[12px]/[16px] text-white/40">{cap.reason}</div>
-                  )}
-                </div>
-                <Pill className="pointer-events-none h-[20px] shrink-0 px-[7px] text-[10px]">
-                  后续版本
-                </Pill>
-              </div>
-            ))}
-          </div>
-        )}
-        <Notice tone="info" className="mt-[12px]">
-          这些能力依赖 macOS 私有接口或 root 权限，不影响上面已接入的模块。
-        </Notice>
-        <Notice tone="info" className="mt-[12px]">
-          「网络」模块显示 Wi-Fi 名称需要定位权限（macOS 14.4+）。
-          开启网络模块时会顺手弹窗申请；也可以在「通用 → 权限与授权」里统一查看与授权。
-        </Notice>
-      </CardGroup>
+        <div className="px-[4px] pb-[2px] pt-[16px]">
+          <p className="text-[12px]/[16px] font-medium text-white/70">连接图标</p>
+        </div>
+        <div className="space-y-[2px]">
+          <ToggleRow
+            label="有线连接使用 Wi‑Fi 图标"
+            checked={statusbar.glyph_wifi_for_ethernet}
+            onChange={(v) => save({ glyph_wifi_for_ethernet: v })}
+          />
+          <Divider />
+          <ToggleRow
+            label="个人热点使用 Wi‑Fi 图标"
+            checked={statusbar.glyph_wifi_for_hotspot}
+            onChange={(v) => save({ glyph_wifi_for_hotspot: v })}
+          />
+          <Divider />
+          <ToggleRow
+            label="临时连接使用 Wi‑Fi 图标"
+            checked={statusbar.glyph_wifi_for_temporary}
+            onChange={(v) => save({ glyph_wifi_for_temporary: v })}
+          />
+          <Divider />
+          <ToggleRow
+            label="互联网共享使用 Wi‑Fi 图标"
+            checked={statusbar.glyph_wifi_for_sharing}
+            onChange={(v) => save({ glyph_wifi_for_sharing: v })}
+          />
+        </div>
+      </Disclosure>
     </div>
   );
 }

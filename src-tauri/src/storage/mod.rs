@@ -2,7 +2,6 @@
 
 pub mod db;
 pub mod migrations;
-pub mod schema;
 
 use std::path::PathBuf;
 

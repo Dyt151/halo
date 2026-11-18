@@ -25,7 +25,7 @@ export function initialIndex(actions: RingAction[], suggested: string | null): n
 }
 
 /**
- * 中心主标题：数量 + 格式（Wheel §1.3 A）。
+ * 中心主标题：数量 + 格式（Filee 行为 A）。
  *
  * 单一格式写「3 个 PNG」，同类混选写「3 张图片」，跨类才写混合——
  * 选了 20 张 PNG 还只写「图片」等于什么都没说。
@@ -46,7 +46,7 @@ export type RingDragEndDecision =
   | { kind: "reject"; reason: string };
 
 /**
- * 松手时的决策（§3.3）。
+ * 松手时的决策（Filee 行为）。
  *
  * 松手按最后一次命中决定：落在扇区上就执行，其余（中心 / 环外 / 空环 /
  * 从未命中）都算取消。命中禁用扇区时不静默吞掉，而是把原因返回让组件

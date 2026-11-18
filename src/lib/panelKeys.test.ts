@@ -7,13 +7,14 @@ function ctx(overrides: Partial<PanelKeyContext> = {}): PanelKeyContext {
     metaOrCtrl: false,
     composing: false,
     isSearch: false,
+    searchEmpty: false,
     isTyping: false,
     targetInClipCard: false,
     dialogOpen: false,
     hasTextSelection: false,
     hasFilter: false,
     numHotkeyEnabled: true,
-    boardStyle: "horizontal",
+    boardStyle: "list",
     itemCount: 5,
     selected: 2,
     ...overrides,
@@ -33,10 +34,18 @@ describe("resolvePanelKey · 输入法保护", () => {
 });
 
 describe("resolvePanelKey · Esc / ⌘F", () => {
-  it("Esc 收起面板（优先级最高，输入中/对话框打开都生效）", () => {
+  it("Esc 收起面板（搜索框为空 / 对话框打开都生效）", () => {
     expect(resolvePanelKey(ctx({ key: "Escape" }))).toEqual({ type: "close" });
-    expect(resolvePanelKey(ctx({ key: "Escape", isTyping: true }))).toEqual({ type: "close" });
+    expect(resolvePanelKey(ctx({ key: "Escape", isTyping: true, searchEmpty: true }))).toEqual({
+      type: "close",
+    });
     expect(resolvePanelKey(ctx({ key: "Escape", dialogOpen: true }))).toEqual({ type: "close" });
+  });
+
+  it("搜索框有内容时 Esc 先清空，不收起面板", () => {
+    expect(
+      resolvePanelKey(ctx({ key: "Escape", isSearch: true, isTyping: true, searchEmpty: false })),
+    ).toEqual({ type: "clearSearch" });
   });
 
   it("⌘F / Ctrl+F 聚焦搜索", () => {
@@ -166,10 +175,17 @@ describe("resolvePanelKey · ⌘C / ⌘D / ⌘⌫", () => {
 
 describe("resolvePanelKey · 方向键导航", () => {
   it("横向排列：→ 下一条，← 上一条", () => {
-    expect(resolvePanelKey(ctx({ key: "ArrowRight" }))).toEqual({ type: "navigate", delta: 1 });
-    expect(resolvePanelKey(ctx({ key: "ArrowLeft" }))).toEqual({ type: "navigate", delta: -1 });
-    expect(resolvePanelKey(ctx({ key: "ArrowUp" })).type).toBe("ignore");
-    expect(resolvePanelKey(ctx({ key: "ArrowDown" })).type).toBe("ignore");
+    const horizontal = { boardStyle: "horizontal" };
+    expect(resolvePanelKey(ctx({ key: "ArrowRight", ...horizontal }))).toEqual({
+      type: "navigate",
+      delta: 1,
+    });
+    expect(resolvePanelKey(ctx({ key: "ArrowLeft", ...horizontal }))).toEqual({
+      type: "navigate",
+      delta: -1,
+    });
+    expect(resolvePanelKey(ctx({ key: "ArrowUp", ...horizontal })).type).toBe("ignore");
+    expect(resolvePanelKey(ctx({ key: "ArrowDown", ...horizontal })).type).toBe("ignore");
   });
 
   it("纵向排列：↓ 下一条，↑ 上一条", () => {
@@ -186,10 +202,23 @@ describe("resolvePanelKey · 方向键导航", () => {
     );
   });
 
-  it("搜索框内方向键是移动光标，不切换卡片", () => {
+  it("搜索框有内容时方向键是移动光标", () => {
     expect(
       resolvePanelKey(ctx({ key: "ArrowRight", isSearch: true, isTyping: true })).type,
     ).toBe("ignore");
+  });
+
+  it("搜索框为空时 ↑↓ 可以浏览列表（唤出即搜的核心心流）", () => {
+    expect(
+      resolvePanelKey(
+        ctx({ key: "ArrowDown", isSearch: true, isTyping: true, searchEmpty: true }),
+      ),
+    ).toEqual({ type: "navigate", delta: 1 });
+    expect(
+      resolvePanelKey(
+        ctx({ key: "ArrowUp", isSearch: true, isTyping: true, searchEmpty: true }),
+      ),
+    ).toEqual({ type: "navigate", delta: -1 });
   });
 
   it("无关按键不动作", () => {

@@ -3,9 +3,9 @@
 //! 声明的边：PNG / JPG / WebP / GIF / BMP / TIFF 六种编解码格式两两互转 +
 //! 每种格式的 self edge（同格式重编码）。self edge 只是「引擎有能力」，是否
 //! 真的执行由 preset 的 `reencode_same_format` 决定——JPG→JPG 降质量是合法
-//! 任务，PNG→PNG 无事可做就该在规划前被判成「已是目标格式」（§2.4 / 验收 P0）。
+//! 任务，PNG→PNG 无事可做就该在规划前被判成「已是目标格式」（Filee 行为 / 验收 P0）。
 //!
-//! 两条不静默保真的语义（§5.1）：
+//! 两条不静默保真的语义（Filee 行为）：
 //! - 透明图转到无 alpha 格式（JPG）先按 preset 背景色合成，绝不留下随机黑底；
 //! - EXIF 方向烘焙进像素（`Orientation` 由解码器给出），输出不带 EXIF；
 //! - 动画 GIF 只有 GIF→GIF 才逐帧保留，其余目标保留首帧并**记警告**。

@@ -73,6 +73,50 @@ export function VirtualStrip<T>({
   );
 }
 
+/** 纵向等高的行列表（面板默认形态：44px 行 + 2px 间隔）。 */
+export function VirtualRows<T>({
+  items,
+  render,
+  scrollRef,
+  scrollToIndex,
+  className,
+  rowHeight = 46,
+  padding = 6,
+}: BaseProps<T> & { rowHeight?: number; padding?: number }) {
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 10,
+  });
+
+  useEffect(() => {
+    if (scrollToIndex === undefined) return;
+    virtualizer.scrollToIndex(scrollToIndex, { align: "auto" });
+  }, [scrollToIndex, virtualizer]);
+
+  return (
+    <div
+      ref={scrollRef}
+      role="listbox"
+      aria-label="剪贴板历史"
+      className={cx("scroll-apple min-h-0 flex-1 overflow-y-auto", className)}
+    >
+      <div className="relative" style={{ height: virtualizer.getTotalSize() + padding * 2 }}>
+        {virtualizer.getVirtualItems().map((v) => (
+          <div
+            key={v.key}
+            className="absolute left-0 right-0 px-1.5"
+            style={{ top: v.start + padding, height: rowHeight }}
+          >
+            {render(items[v.index], v.index)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** 网格虚拟列表：列数由容器宽度与最小列宽推导，行高固定。 */
 export function VirtualGrid<T>({
   items,

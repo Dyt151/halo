@@ -1,5 +1,7 @@
 /**
- * 环形几何（移植自 Filee `DonutGeometry`，见 docs/REA-Filee-Ring-Integrated.md §4）。
+ * 环形几何（移植自 Filee 的 `DonutGeometry`：https://github.com/KnifeLemon/Filee ，
+ * MIT License，Copyright (c) 2026 Myeonggu Kim (KnifeLemon) and Filee contributors，
+ * 完整许可证见仓库根目录 `LICENSE-FILEE.txt`；建模说明见 README「三、环形文件转换」）。
  *
  * 约定与 Filee 一致：**从 12 点开始、顺时针增加**的弧度；半径/孔径比例可调；
  * 每个扇区两侧按「固定 3px 像素间隙」校正角度，而不是固定角间隙；
@@ -90,7 +92,7 @@ export function hitTest(
  * 两侧按固定像素间隙校正，保证 N 变化时视觉缝隙恒定。
  *
  * `n === 1` 时直接画整圆：只剩一个目标时那条 3px 缝没有任何信息量，
- * 反而像是「还差一块」（Wheel §2.2：不画无意义的单扇区分割）。
+ * 反而像是「还差一块」（Filee 行为：不画无意义的单扇区分割）。
  */
 export function sectorPath(
   cx: number,
@@ -152,19 +154,19 @@ export function outwardUnit(i: number, n: number): Pt {
 }
 
 /**
- * 窗口边长：`2 × (R + PopOut + 14)`（文档 §2.2 `SideFor`，无子环）。
+ * 窗口边长：`2 × (R + PopOut + 14)`（Filee 行为 `SideFor`，无子环）。
  * 留出的 14px 给阴影，7px 给 hover 弹出——窗口小于它会把 hover 位移和
  * 外发光裁掉。
  */
 export const RING_SIDE = 2 * (RING_GEOM.R + RING_GEOM.popOut + 14);
 
 /* ------------------------------------------------------------------ */
-/* 设置页圆环编辑器的顺序运算（docs/REA-Filee-Ring-Integrated.md §2.3）   */
+/* 设置页圆环编辑器的顺序运算（README「三、环形文件转换」）   */
 /* ------------------------------------------------------------------ */
 
 /** 每个 Profile 最多几个扇区（与 Rust `MAX_PROFILE_SLICES` 同值）。 */
 export const MAX_SLICES = 16;
-/** 拖动阈值：超过 5px 才算拖动，否则当点击（规范 §1.2）。 */
+/** 拖动阈值：超过 5px 才算拖动，否则当点击（Filee 行为）。 */
 export const DRAG_THRESHOLD = 5;
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -174,7 +176,7 @@ function clamp(n: number, lo: number, hi: number): number {
 /**
  * 添加预览：把 id 插到 slot（slot ∈ 0..n）。
  * 预览时 slot 数按 `count + 1` 计算，所以命中测试也要用 n + 1 个扇区，
- * 否则缝隙一打开指针就会「跳」到隔壁 slot（规范 §3.2）。
+ * 否则缝隙一打开指针就会「跳」到隔壁 slot（Filee 行为）。
  */
 export function withInsert(ids: string[], id: string, slot: number): string[] {
   const at = clamp(slot, 0, ids.length);

@@ -21,6 +21,8 @@ export interface PanelKeyContext {
   composing: boolean;
   /** 焦点是否在面板搜索框上（搜索框聚焦时 ⌘1~9 / Enter 仍生效）。 */
   isSearch: boolean;
+  /** 搜索框当前是否为空（空时方向键才用于切换条目）。 */
+  searchEmpty: boolean;
   /** 目标是否为任意可编辑控件（input/textarea/select/contenteditable，含搜索框）。 */
   isTyping: boolean;
   /** 目标是否落在某张卡片内（卡片自己处理 Enter，这里不再重复）。 */
@@ -46,6 +48,8 @@ export type PanelKeyAction =
   | { type: "ignore" }
   | { type: "close" }
   | { type: "focusSearch" }
+  /** 搜索框内有内容时按 Esc：先清空，不收起面板（macOS 惯例）。 */
+  | { type: "clearSearch" }
   /** ⌘N 回贴第 N 条。 */
   | { type: "pasteIndex"; index: number }
   /** 搜索框内 Enter：先落地防抖查询，再回贴第一条。 */
@@ -71,7 +75,12 @@ export function resolvePanelKey(ctx: PanelKeyContext): PanelKeyAction {
   // 中文输入法用 Enter 上屏候选词：这一下也带 keydown，绝不能当成「回贴」。
   if (ctx.composing) return { type: "ignore" };
 
-  if (ctx.key === "Escape") return { type: "close" };
+  // Esc 分级：搜索框里有内容时先清空（保留面板），空搜索框或焦点在
+  // 列表上时才收起。macOS 的查找栏就是这个语义。
+  if (ctx.key === "Escape") {
+    if (ctx.isSearch && !ctx.searchEmpty) return { type: "clearSearch" };
+    return { type: "close" };
+  }
 
   if (ctx.metaOrCtrl && ctx.key.toLowerCase() === "f") return { type: "focusSearch" };
 
@@ -116,11 +125,14 @@ export function resolvePanelKey(ctx: PanelKeyContext): PanelKeyAction {
     return { type: "delete" };
   }
 
-  // 方向键在搜索框里是移动光标，不能拿来切卡片。
-  if (ctx.isTyping) return { type: "ignore" };
+  // 方向键：搜索框有内容时是移动光标；搜索框为空时用于切换条目。
+  // 这正是面板「唤出即聚焦搜索」后仍然能用方向键浏览的原因（评审 U-01）。
+  if (ctx.isTyping && !ctx.isSearch) return { type: "ignore" };
+  if (ctx.isSearch && !ctx.searchEmpty) return { type: "ignore" };
 
+  const vertical = ctx.boardStyle === "vertical" || ctx.boardStyle === "list";
   const delta =
-    ctx.boardStyle === "vertical"
+    vertical
       ? ctx.key === "ArrowDown"
         ? 1
         : ctx.key === "ArrowUp"

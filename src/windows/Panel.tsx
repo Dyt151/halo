@@ -1,10 +1,10 @@
 /**
  * 剪贴板面板（快捷键唤出的悬浮横条）。
  *
- * 严格按 docs/UI-DESIGN.md §9.1：工具栏 44px / 标签行 34px / 卡片流 flex-1 / 状态栏 36px，
+ * 严格按 Apple HIG：工具栏 44px / 标签行 34px / 卡片流 flex-1 / 状态栏 36px，
  * 外框 12px 圆角 + 毛玻璃材质，出现 200ms / 收起 140ms 动画（评审 E2 / U9）。
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useClipStore } from "../store/useClipStore";
 import { useClipActions } from "../hooks/useClipActions";
@@ -13,13 +13,16 @@ import { confirm, getDialog } from "../lib/dialog";
 import { api } from "../lib/ipc";
 import { FILTERS, type FilterKey } from "../lib/filters";
 import { resolvePanelKey } from "../lib/panelKeys";
+import { usePrefersReducedMotion } from "../lib/usePrefersReducedMotion";
 import { toastError } from "../lib/toast";
 import ClipItemCard from "../components/ClipItem";
+import ClipDetail from "../components/ClipDetail";
+import ClipRow from "../components/ClipRow";
 import ClipContextMenu from "../components/ClipContextMenu";
 import StatusBar from "../components/StatusBar";
 import TagBar from "../components/TagBar";
 import ToastHost from "../components/ToastHost";
-import { VirtualGrid, VirtualStrip } from "../components/VirtualList";
+import { VirtualGrid, VirtualRows, VirtualStrip } from "../components/VirtualList";
 import { Btn, EmptyState, IconBtn, SearchField, Segment, Spinner } from "../components/ui";
 
 const Icon = ({ children }: { children: React.ReactNode }) => (
@@ -47,8 +50,7 @@ export default function Panel() {
   const favoriteOnly = useClipStore((s) => s.favoriteOnly);
   const activeTag = useClipStore((s) => s.activeTag);
   const clearFilters = useClipStore((s) => s.clearFilters);
-  const stats = useClipStore((s) => s.stats);
-  const boardStyle = useClipStore((s) => s.config?.board_style) ?? "horizontal";
+  const boardStyle = useClipStore((s) => s.config?.board_style) ?? "list";
   const clearAll = useClipStore((s) => s.clearAll);
   const confirmOnDelete = useClipStore((s) => s.config?.confirm_on_delete) ?? true;
   const autoCloseAfterPaste = useClipStore((s) => s.config?.auto_close_after_paste) ?? true;
@@ -65,7 +67,18 @@ export default function Panel() {
   const captureNow = useClipStore((s) => s.captureNow);
   const flushSearch = useClipStore((s) => s.flushSearch);
 
-  const [selected, setSelected] = useState(0);
+  // 选中项按 id 记录：后台新复制一条会前插到列表头部，存下标会让
+  // Enter 悄悄作用到另一条记录上（评审 E-04）。
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selected = useMemo(() => {
+    if (selectedId === null) return 0;
+    const i = items.findIndex((item) => item.id === selectedId);
+    return i < 0 ? 0 : i;
+  }, [items, selectedId]);
+  // 全文浮层的状态提升到面板：原来挂在被虚拟化的卡片内部，
+  // 列表一刷新（新复制一条）组件被替换，浮层就静默关闭（评审 E-03）。
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const detailClip = detailId === null ? null : items.find((i) => i.id === detailId) ?? null;
   // 每次「面板出现」自增：作为根节点 key 重放出现动画、复位滚动。
   // 面板窗口是 hide 而非销毁，React 只挂载一次，不这么做动画只在冷启动播一遍。
   const [shownKey, setShownKey] = useState(0);
@@ -75,6 +88,9 @@ export default function Panel() {
   const closingRef = useRef(false);
   /** 收起定时器：面板在 140ms 内被重新唤出时必须取消，否则会把新面板又隐藏掉。 */
   const closeTimerRef = useRef<number | null>(null);
+  /** 减弱动态时没有可看的收起动画，直接隐藏，少等 140ms。 */
+  const reduceMotion = usePrefersReducedMotion();
+  const closeAnimMs = reduceMotion ? 0 : CLOSE_ANIM_MS;
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const { menu, setMenu, moduleActions, handlers, openMenu, availableTags } = useClipActions();
@@ -104,27 +120,14 @@ export default function Panel() {
       closingRef.current = false;
       setClosing(false);
       void api.hidePanel().catch((e) => toastError(e, "收起面板失败"));
-    }, CLOSE_ANIM_MS);
+    }, closeAnimMs);
     return true;
-  }, []);
+  }, [closeAnimMs]);
 
   // 切筛选/改关键词：回到第一条。
   useEffect(() => {
-    setSelected(0);
+    setSelectedId(null);
   }, [activeKey, keyword]);
-
-  // 列表长度变化（后台又复制了一条 / 删掉一条）只做「不越界」修正：
-  // 旧写法把长度也当成复位信号，结果用户在浏览时后台复制一下，选中项就跳回第一条。
-  useEffect(() => {
-    setSelected((prev) => Math.min(prev, Math.max(items.length - 1, 0)));
-  }, [items.length]);
-
-  // 过滤标签计数：来自后端全局统计，不随当前筛选变化。
-  const countOf = (key: FilterKey): number => {
-    if (key === "all") return stats.total;
-    if (key === "favorite") return stats.favorite;
-    return stats.by_type[key] ?? 0;
-  };
 
   // 有筛选/搜索/标签时，列表序号不再等于全局 ⌘N 语义，卡片上不展示 ⌘N 角标。
   const hasFilter = Boolean(keyword.trim() || contentType || favoriteOnly || activeTag);
@@ -162,7 +165,7 @@ export default function Panel() {
       setShownKey((k) => k + 1);
       setClosing(false);
       closingRef.current = false;
-      setSelected(0);
+      setSelectedId(null);
       listRef.current?.scrollTo({ left: 0, top: 0 });
       // 评审 G3：不再沿用上次的搜索词 —— 再次唤出却还是旧结果，
       // 用户会以为列表空了。筛选类型与标签属于「显式选择」，保留。
@@ -213,6 +216,7 @@ export default function Panel() {
         metaOrCtrl: !!(e.metaKey || e.ctrlKey),
         composing: e.isComposing || e.keyCode === 229,
         isSearch,
+        searchEmpty: keyword.trim().length === 0,
         isTyping: typing,
         targetInClipCard: !!target?.closest("[data-clip-card]"),
         dialogOpen: getDialog() !== null,
@@ -235,11 +239,16 @@ export default function Panel() {
           e.preventDefault();
           focusSearch();
           return;
+        case "clearSearch":
+          e.preventDefault();
+          setKeyword("");
+          focusSearch();
+          return;
         case "pasteIndex": {
           const item = items[action.index];
           if (!item) return; // 状态机已保证合法，双保险。
           e.preventDefault();
-          setSelected(action.index);
+          setSelectedId(item.id);
           void paste(item.id).then((outcome) => {
             if (outcome && autoCloseAfterPaste) void closePanel();
           });
@@ -293,12 +302,15 @@ export default function Panel() {
           })();
           return;
         }
-        case "navigate":
+        case "navigate": {
           e.preventDefault();
-          setSelected((prev) =>
-            Math.min(Math.max(prev + action.delta, 0), Math.max(items.length - 1, 0)),
+          const next = Math.min(
+            Math.max(selected + action.delta, 0),
+            Math.max(items.length - 1, 0),
           );
+          setSelectedId(items[next]?.id ?? null);
           return;
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -312,6 +324,7 @@ export default function Panel() {
     flushSearch,
     hasFilter,
     items,
+    keyword,
     numHotkeyEnabled,
     paste,
     remove,
@@ -360,7 +373,7 @@ export default function Panel() {
       keyword={keyword}
       className={cardClass}
       onPaste={() => {
-        setSelected(i);
+        setSelectedId(item.id);
         void paste(item.id).then((outcome) => {
           if (outcome && autoCloseAfterPaste) void closePanel();
         });
@@ -369,6 +382,27 @@ export default function Panel() {
       onDelete={() => void handlers.onDelete(item)}
       onToggleFavorite={(v) => void handlers.onToggleFavorite(item, v)}
       onContextMenu={(e) => openMenu(e, item)}
+    />
+  );
+
+  const renderRow = (item: (typeof items)[number], i: number) => (
+    <ClipRow
+      key={item.id}
+      clip={item}
+      hotkey={hasFilter || !numHotkeyEnabled ? undefined : i + 1}
+      selected={i === selected}
+      keyword={keyword}
+      onPaste={() => {
+        setSelectedId(item.id);
+        void paste(item.id).then((outcome) => {
+          if (outcome && autoCloseAfterPaste) void closePanel();
+        });
+      }}
+      onCopy={() => void copyClip(item.id)}
+      onDelete={() => void handlers.onDelete(item)}
+      onToggleFavorite={(v) => void handlers.onToggleFavorite(item, v)}
+      onContextMenu={(e) => openMenu(e, item)}
+      onOpenDetail={() => setDetailId(item.id)}
     />
   );
 
@@ -388,7 +422,7 @@ export default function Panel() {
         <div className="grid h-full place-items-center px-[24px]">
           <div className="flex w-full max-w-[560px] flex-col items-center gap-[10px]">
             <EmptyState icon={emptyIcon} title="历史加载失败" />
-            <p className="max-h-[48px] w-full overflow-hidden break-words text-center text-[12px]/[16px] text-danger/80">
+            <p className="max-h-[96px] w-full overflow-y-auto break-words text-center text-[12px]/[16px] text-danger select-text">
               {error}
             </p>
             <div className="flex items-center gap-[8px]">
@@ -455,31 +489,33 @@ export default function Panel() {
         closing ? "animate-panel-out" : "animate-panel-in"
       }`}
     >
-      {/* 工具栏 */}
+      {/* 工具栏：40px，搜索框可压缩，筛选段横向滚动，窄窗不再把右侧按钮顶出窗口。 */}
       <header
-        className="flex h-[44px] shrink-0 items-center gap-[8px] px-[16px]"
+        className="flex h-[40px] shrink-0 items-center gap-[6px] px-[12px]"
         data-tauri-drag-region
       >
         <SearchField
           value={keyword}
           onChange={setKeyword}
           placeholder="搜索历史"
-          width="w-[220px]"
+          width="w-[180px] min-w-[110px] shrink"
           inputRef={searchRef}
         />
-        <Segment
-          items={FILTERS.map((f) => ({
-            value: f.key,
-            label: f.label,
-            count: countOf(f.key),
-          }))}
-          value={activeKey}
-          onChange={selectFilter}
-        />
-        <div className="min-w-[8px] flex-1" data-tauri-drag-region />
+        <div className="scroll-apple flex min-w-0 flex-1 items-center overflow-x-auto">
+          <Segment
+            items={FILTERS.map((f) => ({
+              value: f.key,
+              label: f.label,
+            }))}
+            value={activeKey}
+            onChange={selectFilter}
+          />
+        </div>
+        <div className="min-w-[4px] flex-1" data-tauri-drag-region />
         <IconBtn
           title="清空历史"
           danger
+          className="h-[28px] w-[28px]"
           onClick={async () => {
             // 与历史页同一套文案：清空不走撤销栈，图片文件也会被删，
             // 这里写「确定清空」会让人以为是可恢复操作。
@@ -500,7 +536,7 @@ export default function Panel() {
             <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z" />
           </Icon>
         </IconBtn>
-        <IconBtn title="设置" onClick={() => void openMainWindow("general")}>
+        <IconBtn title="设置" className="h-[28px] w-[28px]" onClick={() => void openMainWindow("general")}>
           <Icon>
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
@@ -510,27 +546,39 @@ export default function Panel() {
 
       <TagBar className="border-b border-white/[0.06]" />
 
-      {/* 卡片流：横向（默认）或纵向网格，由 board_style 决定。
-          两者都走虚拟化（评审 G4）：最多 500 条时只渲染视口内外的少量卡片。 */}
-      {renderBody(() =>
-        boardStyle === "vertical" ? (
-          <VirtualGrid
+      {/* 默认行列表；横向 / 纵向卡片保留为可选形态。 */}
+      {renderBody(() => {
+        if (boardStyle === "vertical") {
+          return (
+            <VirtualGrid
+              items={items}
+              scrollRef={listRef}
+              scrollToIndex={selected}
+              minColumnWidth={168}
+              rowHeight={220}
+              render={(item, i) => renderCard(item, i, "h-[220px] w-full")}
+            />
+          );
+        }
+        if (boardStyle === "horizontal") {
+          return (
+            <VirtualStrip
+              items={items}
+              scrollRef={listRef}
+              scrollToIndex={selected}
+              render={(item, i) => renderCard(item, i, "w-full")}
+            />
+          );
+        }
+        return (
+          <VirtualRows
             items={items}
             scrollRef={listRef}
             scrollToIndex={selected}
-            minColumnWidth={168}
-            rowHeight={220}
-            render={(item, i) => renderCard(item, i, "h-[220px] w-full")}
+            render={renderRow}
           />
-        ) : (
-          <VirtualStrip
-            items={items}
-            scrollRef={listRef}
-            scrollToIndex={selected}
-            render={(item, i) => renderCard(item, i, "w-full")}
-          />
-        ),
-      )}
+        );
+      })}
 
       <StatusBar />
 
@@ -541,6 +589,24 @@ export default function Panel() {
         onClose={() => setMenu(null)}
         {...handlers}
       />
+
+      {detailClip && (
+        <ClipDetail
+          clip={detailClip}
+          onClose={() => setDetailId(null)}
+          onCopy={() => {
+            void copyClip(detailClip.id);
+            setDetailId(null);
+          }}
+          onPaste={() => {
+            const id = detailClip.id;
+            setDetailId(null);
+            void paste(id).then((outcome) => {
+              if (outcome && autoCloseAfterPaste) void closePanel();
+            });
+          }}
+        />
+      )}
 
       <ToastHost variant="panel" />
     </div>

@@ -23,7 +23,7 @@ interface Props {
 }
 
 /**
- * 类型徽章配色（规范 §2.5）：14% 透明度彩底 + 同色系亮字，永不加边框。
+ * 类型徽章配色（Apple HIG）：14% 透明度彩底 + 同色系亮字，永不加边框。
  * 这是 Apple 深色模式徽章的标准做法。
  */
 const BADGE: Record<ClipItemType["content_type"], string> = {

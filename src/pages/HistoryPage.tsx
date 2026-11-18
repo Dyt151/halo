@@ -186,7 +186,7 @@ export default function HistoryPage() {
         </span>
         <span
           className={`pointer-events-none absolute inset-0 rounded-[10px] transition-[box-shadow] duration-120 ${
-            checked ? "shadow-[inset_0_0_0_2px_rgba(232,163,61,0.85)]" : ""
+            checked ? "shadow-[inset_0_0_0_2px_var(--hairline-focus)]" : ""
           }`}
           aria-hidden
         />
@@ -296,7 +296,7 @@ export default function HistoryPage() {
         <div className="grid min-h-0 flex-1 place-items-center px-[24px]">
           <div className="flex w-full max-w-[560px] flex-col items-center gap-[10px]">
             <EmptyState title="历史加载失败" />
-            <p className="max-h-[48px] w-full overflow-hidden break-words text-center text-[12px]/[16px] text-danger/80">
+            <p className="scroll-apple max-h-[96px] w-full select-text overflow-y-auto break-words text-center text-[12px]/[16px] text-danger/80">
               {error}
             </p>
             <Btn size="sm" variant="primary" onClick={() => void refresh()}>

@@ -387,6 +387,12 @@ pub fn output_state() -> AudioDeviceState {
     read_state(AudioScope::Output)
 }
 
+/// 轻量读默认输出音量：只取一个标量，供音量反馈轮询（不枚举设备）。
+pub fn output_volume() -> Option<f32> {
+    let id = system_uint32(PROP_DEFAULT_OUTPUT)?;
+    read_volume(id, SCOPE_OUTPUT)
+}
+
 pub fn input_state() -> AudioDeviceState {
     read_state(AudioScope::Input)
 }

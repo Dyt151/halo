@@ -1,7 +1,7 @@
 /**
  * Halo 共享 UI 控件库
  *
- * 所有控件严格遵循 docs/UI-DESIGN.md（Apple HIG 落地规范）：
+ * 所有控件严格遵循 Apple HIG：
  * - 高度固定（按钮 28 / 小按钮 24 / 输入框 28 / 导航 30 / 工具栏 44）
  * - 圆角只用 5/6/7/8/10/12/full 六档
  * - 字号只用 11/12/13/15/17/20/28 七档
@@ -67,7 +67,7 @@ export const IconBtn = forwardRef<HTMLButtonElement, IconBtnProps>(function Icon
   );
 });
 
-/** 卡片内嵌的图标按钮（规范 §9.1）：视觉图标 13px，热区 24×24（macOS HIG ≥24pt）。 */
+/** 卡片内嵌的图标按钮（Apple HIG）：视觉图标 13px，热区 24×24（macOS HIG ≥24pt）。 */
 export const CardIconBtn = forwardRef<
   HTMLButtonElement,
   IconBtnProps & { active?: boolean }
@@ -104,7 +104,7 @@ export interface SegmentOption<T extends string = string> {
 }
 
 /**
- * 分段控件：外槽 + 选中滑块（规范 §5.4）。
+ * 分段控件：外槽 + 选中滑块（Apple HIG）。
  *
  * 评审 U5：role="tablist" 只给了角色，没有键盘行为 —— 方向键不移动、
  * Tab 会逐个停留、未选中项没有 aria-selected="false"。这里补上 roving
@@ -172,7 +172,7 @@ export function Segment<T extends string = string>({
   );
 }
 
-/** 胶囊标签：全部 / 分类 / 标签 / 能力 chip（规范 §5.5）。 */
+/** 胶囊标签：全部 / 分类 / 标签 / 能力 chip（Apple HIG）。 */
 export function Pill({
   selected,
   className,
@@ -197,7 +197,7 @@ export function Pill({
   );
 }
 
-/** 快捷键键帽（规范 §5.10）。 */
+/** 快捷键键帽（Apple HIG）。 */
 export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
   return <kbd className={cx("kbd", className)}>{children}</kbd>;
 }
@@ -248,7 +248,7 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 /* 开关 / 滑块 / 输入                                                  */
 /* ------------------------------------------------------------------ */
 
-/** 28×17 开关（规范 §5.2）。 */
+/** 28×17 开关（Apple HIG）。 */
 export function Switch({
   checked,
   onChange,
@@ -282,7 +282,7 @@ export function Switch({
   );
 }
 
-/** 带标签的设置行（label 左 / 控件右），规范 §9.3。 */
+/** 带标签的设置行（label 左 / 控件右），Apple HIG。 */
 export function Row({
   label,
   hint,
@@ -324,7 +324,7 @@ export function ToggleRow({
   );
 }
 
-/** 滑块行：标签 + 右对齐数值 + 统一样式 range（规范 §5.3）。 */
+/** 滑块行：标签 + 右对齐数值 + 统一样式 range（Apple HIG）。 */
 export function SliderRow({
   label,
   value,
@@ -390,7 +390,7 @@ export const Select = forwardRef<
         "h-[28px] rounded-md border border-white/[0.08] bg-white/[0.05] px-[8px]",
         "text-[13px]/[18px] text-white outline-none",
         "transition-[border-color,box-shadow] duration-120 ease-out-soft",
-        "focus:border-accent-500/70 focus:shadow-[0_0_0_3px_rgba(232,163,61,0.30)]",
+        "focus:border-accent-500/70 focus:shadow-[0_0_0_3px_var(--focus-ring)]",
         className,
       )}
       {...rest}
@@ -432,7 +432,7 @@ export function SelectRow({
   );
 }
 
-/** 搜索框：放大镜前置图标 + 圆角输入（规范 §5.6）。 */
+/** 搜索框：放大镜前置图标 + 圆角输入（Apple HIG）。 */
 export function SearchField({
   value,
   onChange,
@@ -508,7 +508,7 @@ export function SearchField({
 /* 分组卡 / 提示条 / 空状态                                            */
 /* ------------------------------------------------------------------ */
 
-/** 设置分组卡：无边框、#2C2C2E 填充、无阴影（规范 §9.3）。 */
+/** 设置分组卡：无边框、#2C2C2E 填充、无阴影（Apple HIG）。 */
 export function CardGroup({
   title,
   subtitle,
@@ -554,7 +554,7 @@ const NOTICE_TONE: Record<NoticeTone, string> = {
   info: "bg-white/[0.06] text-white/70",
 };
 
-/** 12% 透明度语义色提示条，替代旧的高饱和横幅（规范 §9.4）。 */
+/** 12% 透明度语义色提示条，替代旧的高饱和横幅（Apple HIG）。 */
 export function Notice({
   tone = "info",
   children,
@@ -582,7 +582,7 @@ export function Notice({
   );
 }
 
-/** 空状态：图标 + 双行文案（规范 §9.1/§9.5）。 */
+/** 空状态：图标 + 双行文案（Apple HIG/Apple HIG）。 */
 export function EmptyState({
   icon,
   title,

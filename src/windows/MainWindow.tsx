@@ -11,7 +11,6 @@ import {
   consumePendingPage,
   hideCurrentWindow,
   onNavigate,
-  onSectionSwitcher,
   peekSettingsTab,
   takeSettingsTab,
   type MainPage,
@@ -168,23 +167,6 @@ export default function MainWindow() {
     clearSettingsTab();
   }, []);
 
-  // 登记跨分区跳转通道：权限收进「通用」后，其它页面要能跳回来授权。
-  //
-  // 用 ref 存最新的 setSection：下面的 effect 只在挂载时跑一次，
-  // 直接捕获函数会让通道长期持有首帧的闭包。回调本身只依赖
-  // setSectionState / persistedRef / patchConfig 这几个稳定引用，
-  // 但显式走 ref 更省心，也省得以后有人给 setSection 加依赖时踩坑。
-  const setSectionRef = useRef(setSection);
-  setSectionRef.current = setSection;
-
-  useEffect(
-    () =>
-      onSectionSwitcher((page) => {
-        setSectionRef.current(page);
-      }),
-    [],
-  );
-
   // 面板/托盘可请求主窗口落到指定分区。
   useEffect(() => {
     let disposed = false;
@@ -223,7 +205,7 @@ export default function MainWindow() {
   return (
     <div className="app-surface app-surface--window relative flex">
       {/* 单套侧边栏 */}
-      <aside className="flex w-[200px] shrink-0 flex-col border-r border-white/[0.08] bg-black/[0.15]">
+      <aside className="flex w-[168px] shrink-0 flex-col border-r border-white/[0.08] bg-black/[0.15]">
         <header data-tauri-drag-region className="shrink-0 px-[16px] pb-[10px] pt-[36px]">
           <div className="flex items-center gap-[10px]">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-accent-500">
@@ -300,8 +282,11 @@ export default function MainWindow() {
             <Settings section="history" />
           </div>
         ) : (
-          <div key={section} className="scroll-apple min-w-0 flex-1 overflow-y-auto p-[24px]">
-            <div className="mx-auto max-w-[760px]">
+          <div
+            key={section}
+            className="scroll-apple min-w-0 flex-1 animate-fade-in overflow-y-auto p-[24px]"
+          >
+            <div className="mx-auto max-w-[680px]">
               <h2 className="mb-[16px] text-[17px]/[22px] font-semibold text-white">{title}</h2>
               <Settings section={section} />
             </div>

@@ -8,6 +8,7 @@ import {
   signalToNoiseRatio,
   wifiBars,
   wifiMessage,
+  wifiRowAction,
   wirelessRows,
 } from "./wifiPanel";
 import type { StatusBarWifiCandidate, StatusBarWifiDetails, StatusBarWifiScan } from "./types";
@@ -109,11 +110,11 @@ describe("securityKind / requiresPassword / securityName", () => {
 });
 
 describe("wifiBars", () => {
-  it("正版四档：-60 及以上满格", () => {
+  it("正版四档：-70 及以上满格（`StatusMappings.wifiBars` 的 -70/-78/-88）", () => {
     expect(wifiBars(null)).toBe(0);
     expect(wifiBars(-59)).toBe(3);
-    expect(wifiBars(-60)).toBe(3);
-    expect(wifiBars(-61)).toBe(2);
+    expect(wifiBars(-70)).toBe(3);
+    expect(wifiBars(-71)).toBe(2);
     expect(wifiBars(-78)).toBe(2);
     expect(wifiBars(-79)).toBe(1);
     expect(wifiBars(-88)).toBe(1);
@@ -307,7 +308,7 @@ describe("wifiMessage", () => {
   it("扫描失败但从未申请过定位：这是授权入口，不是「无法扫描」", () => {
     expect(
       wifiMessage(scan({ list_state: "failed", name_access: "not_determined" }), false, false),
-    ).toEqual({ text: "允许定位以显示 Wi-Fi 名称", intent: "request_name_access" });
+    ).toEqual({ text: "允许定位以显示 Wi-Fi 网络", intent: "request_name_access" });
     expect(wifiMessage(scan({ list_state: "failed" }), false, false)?.text).toBe(
       "无法扫描 Wi-Fi 网络。",
     );
@@ -316,7 +317,7 @@ describe("wifiMessage", () => {
   it("空扫描 + 未决定：先说缺权限，不能说附近没网络", () => {
     expect(
       wifiMessage(scan({ name_access: "not_determined" }), false, false),
-    ).toEqual({ text: "允许定位以显示 Wi-Fi 名称", intent: "request_name_access" });
+    ).toEqual({ text: "允许定位以显示 Wi-Fi 网络", intent: "request_name_access" });
   });
 
   it("空扫描 + 已拒绝：去定位服务设置", () => {
@@ -329,5 +330,29 @@ describe("wifiMessage", () => {
   it("已授权的空扫描才是「未发现附近网络」，有网络时无提示", () => {
     expect(wifiMessage(scan(), false, false)?.text).toBe("未发现附近网络。");
     expect(wifiMessage(scan(), true, false)).toBeNull();
+  });
+});
+
+describe("wifiRowAction", () => {
+  it("正版：除当前连接外，每一行都只把系统 Wi-Fi 面板打开", () => {
+    const wpa2 = mergeNetworks([candidate({ security: 4 })], null, [], false)[0];
+    const open = mergeNetworks([candidate({ ssid: "Cafe", security: 0 })], null, [], false)[0];
+    expect(wifiRowAction(wpa2)).toBe("open_settings");
+    expect(wifiRowAction(open)).toBe("open_settings");
+  });
+
+  it("已知网络也一样交回系统：面板自己不连接，所以没有「要密码」这一态", () => {
+    const known = mergeNetworks([candidate({ security: 4 })], null, ["Home"], false)[0];
+    expect(known.isKnown).toBe(true);
+    expect(wifiRowAction(known)).toBe("open_settings");
+    // 锁仍然照安全类型画（正版 `requiresPassword`），只是不代表面板要密码。
+    expect(requiresPassword(known.security)).toBe(true);
+  });
+
+  it("已连接那一行是禁用的，只画勾", () => {
+    const bssid = "aa:bb:cc:dd:ee:ff";
+    const connected = mergeNetworks([candidate({ bssid })], bssid, [], false)[0];
+    expect(connected.isConnected).toBe(true);
+    expect(wifiRowAction(connected)).toBe("none");
   });
 });

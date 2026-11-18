@@ -3,9 +3,13 @@
 //!
 //! 全是公开 API，不需要辅助功能权限，也不做按键模拟。
 
+use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
+use objc2::msg_send;
+use objc2::runtime::AnyObject;
 use tauri::AppHandle;
 
 use super::cf;
@@ -31,6 +35,7 @@ extern "C" {
     static kTISPropertyInputSourceIsSelectCapable: cf::CFTypeRef;
     static kTISPropertyInputSourceCategory: cf::CFTypeRef;
     static kTISPropertyInputSourceLanguages: cf::CFTypeRef;
+    static kTISPropertyBundleID: cf::CFTypeRef;
     static kTISCategoryKeyboardInputSource: cf::CFTypeRef;
 }
 
@@ -52,14 +57,27 @@ unsafe fn prop_languages(source: cf::CFTypeRef) -> Vec<String> {
         .collect()
 }
 
-/// 无图标输入源的字标记（正版 `InputSourceShortLabel.make` 的等价实现）。
+/// 输入源所属 App 的 bundle id（Apple 自带的是 com.apple.*，第三方是厂商的）。
+unsafe fn prop_bundle_id(source: cf::CFTypeRef) -> Option<String> {
+    prop_string(source, kTISPropertyBundleID)
+}
+
+/// 无图标输入源的字标记（正版 `InputSourceShortLabel.make` 的等价实现 +
+/// 一处本地化：第三方输入法先认牌子）。
 ///
-/// 只用稳定 ID 和输入源自带的语言元数据推导，不依赖某个第三方输入法的显示名
-/// ——那种名字会被用户改名。
+/// Apple 的布局与自带输入法仍只用稳定 ID 和语言元数据推导；第三方输入法
+/// （微信、搜狗、百度…）优先取显示名首字，因为「拼」在同时装了几个中文输入法时
+/// 分不出是谁——而用户每天看的就是这一枚字牌。显示名是拉丁字母时不抢先取，
+/// 仍走下面的协议判定，兜不住时一样退回首字母。
 fn short_label(id: &str, localized_name: &str, languages: &[String]) -> Option<String> {
     let normalized = id.to_lowercase();
     if let Some(layout) = apple_layout_label(&normalized) {
         return Some(layout);
+    }
+    if !normalized.starts_with("com.apple.") {
+        if let Some(head) = brand_initial(localized_name) {
+            return Some(head);
+        }
     }
     if normalized.contains("pinyin") || localized_name.contains("拼音") {
         return Some("拼".to_string());
@@ -93,6 +111,16 @@ fn short_label(id: &str, localized_name: &str, languages: &[String]) -> Option<S
         .map(|c| c.to_string())
 }
 
+/// 第三方输入法的牌子：显示名第一个非 ASCII 字母的字符（微信输入法→微）。
+fn brand_initial(localized_name: &str) -> Option<String> {
+    localized_name
+        .trim()
+        .chars()
+        .next()
+        .filter(|c| !c.is_whitespace() && !c.is_ascii_alphabetic())
+        .map(|c| c.to_string())
+}
+
 /// ASCII 键盘布局读作单个大写字母：系统菜单栏给 ABC 显示的就是 `A`。
 fn apple_layout_label(normalized_id: &str) -> Option<String> {
     let suffix = normalized_id.strip_prefix("com.apple.keylayout.")?;
@@ -103,6 +131,98 @@ fn apple_layout_label(normalized_id: &str) -> Option<String> {
         .chars()
         .find(char::is_ascii_alphabetic)
         .map(|c| c.to_uppercase().collect())
+}
+
+/* ------------------------------------------------------------------ */
+/* 输入法自带的设置 App                                                  */
+/* ------------------------------------------------------------------ */
+
+/// 输入法包内「设置」子程序的命名习惯：微信输入法是 `WeTypeSettings.app`，
+/// 搜狗是 `SogouPreference.app`，百度是 `BaiduIMESetup.app`。
+const SETTINGS_MARKERS: [&str; 4] = ["setting", "preference", "config", "setup"];
+
+/// 这些子目录里可能藏着设置 App（微信输入法就放在 `Contents/MacOS` 里）。
+const SETTINGS_DIRS: [&str; 5] = ["MacOS", "Helpers", "Applications", "Resources", "XPCServices"];
+
+/// bundle id → 设置 App 路径；找不到也缓存 `None`，免得每次快照都扫盘。
+static SETTINGS_APPS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+
+/// 第三方输入法自己的设置窗口没有公开入口：`wetype://` 只管语音输入，
+/// `open -b com.tencent.inputmethod.wetype` 也只是把常驻的输入法进程带到前台
+/// （它 `LSUIElement`，没有窗口）。系统输入法菜单里的「微信输入法设置…」
+/// 点开的是包内那个独立的设置 App，所以这里按同一个约定去找它。
+pub fn settings_app(bundle_id: &str) -> Option<String> {
+    let cache = SETTINGS_APPS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = cache.lock_ok().get(bundle_id) {
+        return hit.clone();
+    }
+    let found = unsafe { bundle_path(bundle_id) }.and_then(|bundle| find_settings_app(&bundle));
+    cache
+        .lock_ok()
+        .insert(bundle_id.to_string(), found.clone());
+    found
+}
+
+/// `NSBundle bundleWithIdentifier:` 拿安装路径：TIS 只给 bundle id，不给路径。
+unsafe fn bundle_path(bundle_id: &str) -> Option<PathBuf> {
+    let cf_id = cf::cfstr(bundle_id)?;
+    let result = (|| {
+        let class = objc2::runtime::AnyClass::get("NSBundle")?;
+        let bundle: *mut AnyObject = msg_send![class, bundleWithIdentifier: cf_id as *mut AnyObject];
+        if bundle.is_null() {
+            return None;
+        }
+        let path: *mut AnyObject = msg_send![bundle, bundlePath];
+        Some(PathBuf::from(cf::string(path as cf::CFTypeRef)?))
+    })();
+    cf::release(cf_id);
+    result
+}
+
+fn find_settings_app(bundle: &Path) -> Option<String> {
+    for dir in SETTINGS_DIRS {
+        let Ok(entries) = std::fs::read_dir(bundle.join("Contents").join(dir)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("app") {
+                continue;
+            }
+            let stem = path.file_stem()?.to_string_lossy().to_lowercase();
+            if SETTINGS_MARKERS.iter().any(|marker| stem.contains(marker)) {
+                return Some(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+/// 打开输入法自己的设置 App。路径只可能是 [`find_settings_app`] 从输入法包内
+/// 扫出来的，这里再校验一次后缀和所在目录，不接受任何调用方拼出来的路径。
+pub fn open_settings_app(path: &str) -> Result<(), String> {
+    let in_input_methods = path.starts_with("/Library/Input Methods/")
+        || path.starts_with("/System/Library/Input Methods/")
+        || path.starts_with(&format!(
+            "{}/Library/Input Methods/",
+            std::env::var("HOME").unwrap_or_default()
+        ));
+    if !in_input_methods || !path.ends_with(".app") {
+        return Err("找不到该输入法的设置程序".to_string());
+    }
+    // `open` 只是把请求交给 LaunchServices，秒回；等退出码才能把「路径没了」
+    // 这类失败如实报给用户，而不是点完什么都没发生。
+    let output = std::process::Command::new("/usr/bin/open")
+        .arg(path)
+        .output()
+        .map_err(|e| format!("打开失败：{e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "打开输入法设置失败：{}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    ))
 }
 
 /// 正版用法：带「键盘输入源」属性过滤 + `includeAllInstalled = false`。
@@ -140,8 +260,8 @@ unsafe fn list_for_id(id: &str) -> cf::CFTypeRef {
 /// 可切换的键盘输入源（已启用 + 可选择，按 macOS 返回的顺序，不排序）。
 ///
 /// 返回值全部转成 Rust 字符串后在函数内释放列表：TIS 属性是借出的，
-/// 调用方拿到 `(id, name)` 就够了，不必把 CF 生命周期带出去。
-unsafe fn keyboard_sources() -> Vec<(String, String, Option<String>)> {
+/// 调用方拿到 `(id, name, marker, bundle_id)` 就够了，不必把 CF 生命周期带出去。
+unsafe fn keyboard_sources() -> Vec<(String, String, Option<String>, Option<String>)> {
     let list = keyboard_list();
     if list.is_null() {
         return Vec::new();
@@ -162,7 +282,7 @@ unsafe fn keyboard_sources() -> Vec<(String, String, Option<String>)> {
         };
         let name = prop_string(source, kTISPropertyLocalizedName).unwrap_or_else(|| id.clone());
         let marker = short_label(&id, &name, &prop_languages(source));
-        out.push((id, name, marker));
+        out.push((id, name, marker, prop_bundle_id(source)));
     }
     cf::release(list);
     out
@@ -175,7 +295,11 @@ pub fn state() -> InputSources {
 
         let sources = keyboard_sources()
             .into_iter()
-            .map(|(id, name, marker)| InputSource {
+            .map(|(id, name, marker, bundle_id)| InputSource {
+                settings_app: bundle_id
+                    .as_deref()
+                    .filter(|bundle| !bundle.starts_with("com.apple."))
+                    .and_then(settings_app),
                 selected: current.as_deref() == Some(id.as_str()),
                 marker,
                 id,
@@ -276,7 +400,7 @@ unsafe fn current_hint() -> Option<InputSourceHint> {
     Some(InputSourceHint {
         index: sources
             .iter()
-            .position(|(candidate, _, _)| *candidate == id)
+            .position(|(candidate, ..)| *candidate == id)
             .map(|position| position + 1)
             .unwrap_or(0),
         total: sources.len(),
@@ -339,7 +463,54 @@ pub fn watch_changes(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::short_label;
+    use super::{find_settings_app, short_label};
+    use std::path::Path;
+
+    /// 微信输入法那种「设置 App 藏在输入法包内」的约定：按名字找，不认具体厂商。
+    #[test]
+    fn settings_app_is_picked_by_name_from_the_ime_bundle() {
+        let root = std::env::temp_dir().join(format!("halo-ime-bundle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let settings = root.join("Contents/MacOS/StubSettings.app");
+        let helper = root.join("Contents/MacOS/StubUpdater.app");
+        if std::fs::create_dir_all(&settings).is_err() || std::fs::create_dir_all(&helper).is_err()
+        {
+            return; // 临时目录不可用（CI 沙箱）：不为测试环境写死断言
+        }
+        assert_eq!(
+            find_settings_app(&root).as_deref(),
+            Some(settings.to_string_lossy().as_ref())
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Apple 自带输入法没有设置 App：找不到就返回 None，前端不画按钮。
+    #[test]
+    fn bundle_without_settings_app_returns_none() {
+        let root = std::env::temp_dir().join(format!("halo-ime-bare-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        if std::fs::create_dir_all(root.join("Contents/MacOS")).is_err() {
+            return;
+        }
+        assert_eq!(find_settings_app(&root), None);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 真机自检：`cargo test -- --ignored --nocapture settings_app`。
+    /// 只查盘，不碰 TIS——TIS 读取必须在主线程，测试线程调用会直接 abort。
+    #[test]
+    #[ignore = "需要本机装有微信输入法"]
+    fn finds_the_installed_wetype_settings_app() {
+        let bundle = Path::new("/Library/Input Methods/WeType.app");
+        if !bundle.is_dir() {
+            return;
+        }
+        let found = find_settings_app(bundle).unwrap_or_default();
+        assert!(
+            found.ends_with("WeTypeSettings.app"),
+            "微信输入法装好了却没找到设置 App，实际为 {found:?}"
+        );
+    }
 
     #[test]
     fn apple_layouts_read_as_a_single_capital() {
@@ -357,21 +528,42 @@ mod tests {
     }
 
     #[test]
-    fn ime_markers_come_from_the_id_before_the_display_name() {
-        // 正版的规则只认「ID 里有 pinyin」或「显示名里有拼音」：SCIM 的 ID 不含
-        // pinyin，所以英文本地化下两条都不命中，标记退回显示名首字母；一旦读到的
-        // 是中文显示名（bundle 带 zh-Hans.lproj），就命中「拼音」→ 拼。
+    fn third_party_ime_markers_come_from_their_brand_name() {
+        // 本机实测：微信输入法在 TIS 里是 com.tencent.inputmethod.wetype.pinyin，
+        // 显示名「微信输入法」。ID 里有 pinyin，但字牌要认「微」——他日常就是
+        // ABC（英文）+ 微信输入法（中文）两路，「拼」和苹果拼音撞车没意义。
         assert_eq!(
-            short_label("com.apple.inputmethod.SCIM.ITABC", "Pinyin – Simplified", &[]).as_deref(),
-            Some("P")
+            short_label(
+                "com.tencent.inputmethod.wetype.pinyin",
+                "微信输入法",
+                &["zh-Hans".to_string()]
+            )
+            .as_deref(),
+            Some("微")
         );
+        assert_eq!(
+            short_label("com.sogou.inputmethod.sogou", "搜狗拼音", &[]).as_deref(),
+            Some("搜")
+        );
+        // 英文本地化下显示名是拉丁字母，不抢先取牌子首字：协议判定兜不住时
+        // 一样退回首字母，结果仍是品牌名。
+        assert_eq!(
+            short_label("com.sogou.inputmethod.sogou", "Sogou Pinyin", &[]).as_deref(),
+            Some("S")
+        );
+    }
+
+    #[test]
+    fn apple_sources_still_use_the_protocol_rules() {
         assert_eq!(
             short_label("com.apple.inputmethod.SCIM.ITABC", "简体拼音", &[]).as_deref(),
             Some("拼")
         );
+        // 英文本地化下 SCIM 两条中文规则都不命中，退回显示名首字母——这是正版行为，
+        // 不能因为第三方输入法改了牌子就顺手改掉。
         assert_eq!(
-            short_label("com.sogou.inputmethod.sogou", "搜狗拼音", &[]).as_deref(),
-            Some("拼")
+            short_label("com.apple.inputmethod.SCIM.ITABC", "Pinyin – Simplified", &[]).as_deref(),
+            Some("P")
         );
         assert_eq!(
             short_label("com.apple.inputmethod.Kotoeri.KanaTyping", "Japanese", &[]).as_deref(),

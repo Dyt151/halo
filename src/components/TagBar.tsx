@@ -2,7 +2,7 @@ import { useClipStore } from "../store/useClipStore";
 import { cx, Pill } from "./ui";
 
 /**
- * 分组标签行：全部 + 各标签 pill；无标签时整行隐藏（规范 §9.1 标签行）。
+ * 分组标签行：全部 + 各标签 pill；无标签时整行隐藏（Apple HIG 标签行）。
  *
  * 评审 G2：标签列表早期是从**已过滤**的结果里聚合的。选中「工作」之后，
  * 其它标签在结果里不存在，标签栏自己收窄成只剩「工作」，用户再也切不回去。
@@ -23,7 +23,7 @@ export default function TagBar({ className }: { className?: string }) {
   return (
     <div
       className={cx(
-        "scroll-apple flex h-[34px] shrink-0 items-center gap-[6px] overflow-x-auto px-[16px]",
+        "scroll-apple flex h-[30px] shrink-0 items-center gap-[5px] overflow-x-auto px-[12px]",
         className,
       )}
     >

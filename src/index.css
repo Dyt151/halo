@@ -5,27 +5,28 @@
 :root {
   color-scheme: dark;
 
-  /* 背景层级 */
-  --bg-window: #1e1e1e;
-  --bg-group: #2c2c2e;
-  --bg-raised: #3a3a3c;
-  --fill-input: rgba(255, 255, 255, 0.05);
-  --fill-hover: rgba(255, 255, 255, 0.08);
-  --fill-active: rgba(255, 255, 255, 0.12);
-  --fill-selected: rgba(255, 255, 255, 0.1);
-  --scrim: rgba(0, 0, 0, 0.4);
+  /* 背景层级：三层石墨。越靠前越亮，层级只靠明度差 + 1px hairline。
+     参考 Spacedrive 的三栏结构，不再使用暖灰 + 大面积琥珀。 */
+  --bg-window: #0e1013;
+  --bg-group: #16181d;
+  --bg-raised: #1d2026;
+  --fill-input: rgba(255, 255, 255, 0.045);
+  --fill-hover: rgba(255, 255, 255, 0.06);
+  --fill-active: rgba(255, 255, 255, 0.09);
+  --fill-selected: rgba(255, 255, 255, 0.08);
+  --scrim: rgba(0, 0, 0, 0.48);
 
-  /* 强调色 */
-  --accent-500: #e8a33d;
-  --accent-400: #f0b35a;
-  --accent-600: #d68f2b;
-  --accent-on: #1c1c1e;
-  --accent-tint: rgba(232, 163, 61, 0.14);
-  --accent-disabled: rgba(232, 163, 61, 0.32);
+  /* 强调色：单一冷色。琥珀只保留给环形转换与 Finder 拖拽，
+     避免「每个按钮都在喊」。 */
+  --accent-500: #5b8dff;
+  --accent-400: #7aa5ff;
+  --accent-600: #3f72e8;
+  --accent-on: #0b0d12;
+  --accent-tint: rgba(91, 141, 255, 0.15);
+  --accent-disabled: rgba(91, 141, 255, 0.30);
 
   /* 状态栏面板：强调色由 Rust 读「系统设置 → 外观 → 强调色」后内联写入，
-     这里只是首帧兜底（macOS 默认蓝）。面板里的选中底/滑条/开启态都取它，
-     不再用品牌橙。 */
+     这里只是首帧兜底（macOS 默认蓝）。面板里的选中底/滑条/开启态都取它。 */
   --panel-accent: #007aff;
   --on-accent: #ffffff;
   --panel-muted-fill: rgba(255, 255, 255, 0.55);
@@ -33,13 +34,14 @@
   --panel-tile: rgba(255, 255, 255, 0.14);
 
   /* 文本 */
-  --text-primary: #ffffff;
-  --text-preview: #e8e8ed;
+  --text-primary: #f4f5f7;
+  --text-preview: #d9dde4;
 
-  /* 边框 */
-  --hairline: rgba(255, 255, 255, 0.08);
-  --hairline-strong: rgba(255, 255, 255, 0.12);
-  --hairline-focus: rgba(232, 163, 61, 0.7);
+  /* 边框 / 焦点 */
+  --hairline: rgba(255, 255, 255, 0.07);
+  --hairline-strong: rgba(255, 255, 255, 0.11);
+  --hairline-focus: rgba(122, 165, 255, 0.92);
+  --focus-ring: rgba(91, 141, 255, 0.34);
 
   /* 语义色 */
   --success: #32d74b;
@@ -49,10 +51,10 @@
 
   /* 材质 */
   /* 透明度必须留够，否则会遮住底下的 NSVisualEffectView（评审 M3）。 */
-  --material-panel: rgba(28, 28, 30, 0.62);
-  --material-window: rgba(30, 30, 32, 0.74);
-  --material-menu: rgba(44, 44, 46, 0.85);
-  --material-modal: rgba(44, 44, 46, 0.95);
+  --material-panel: rgba(20, 22, 26, 0.72);
+  --material-window: rgba(16, 18, 21, 0.82);
+  --material-menu: rgba(28, 31, 37, 0.90);
+  --material-modal: rgba(28, 31, 37, 0.96);
 
   /* 圆环编辑器（设置页）：扇区与标签不能写死白色，浅色外观会看不见。 */
   --ring-sector-fill: rgba(255, 255, 255, 0.08);
@@ -80,13 +82,13 @@
 
 /*
  * 浅色外观（清单 25）：结构色全部走上面的 CSS 变量，切 `:root.light` 即整套换肤。
- * 取值对照 docs/UI-DESIGN.md 的浅色参考值（window #FFFFFF / group #F2F2F7 / hairline 10% 黑）。
+ * 取值对照 Apple HIG 的浅色参考值（window #FFFFFF / group #F2F2F7 / hairline 10% 黑）。
  */
 :root.light {
   color-scheme: light;
 
   --bg-window: #ffffff;
-  --bg-group: #f2f2f7;
+  --bg-group: #f4f5f7;
   --bg-raised: #ffffff;
   --fill-input: rgba(0, 0, 0, 0.04);
   --fill-hover: rgba(0, 0, 0, 0.06);
@@ -94,27 +96,28 @@
   --fill-selected: rgba(0, 0, 0, 0.07);
   --scrim: rgba(0, 0, 0, 0.28);
 
-  --accent-tint: rgba(232, 163, 61, 0.18);
-  --accent-disabled: rgba(232, 163, 61, 0.28);
+  --accent-tint: rgba(91, 141, 255, 0.16);
+  --accent-disabled: rgba(91, 141, 255, 0.26);
 
   --panel-muted-fill: rgba(0, 0, 0, 0.45);
   --panel-tile: rgba(0, 0, 0, 0.10);
 
-  --text-primary: #000000;
-  --text-preview: #1c1c1e;
+  --text-primary: #101114;
+  --text-preview: #1c1f24;
 
   --hairline: rgba(0, 0, 0, 0.08);
-  --hairline-strong: rgba(0, 0, 0, 0.12);
-  --hairline-focus: rgba(214, 143, 43, 0.75);
+  --hairline-strong: rgba(0, 0, 0, 0.13);
+  --hairline-focus: rgba(47, 95, 204, 0.92);
+  --focus-ring: rgba(47, 95, 204, 0.26);
 
   --success: #1f8a3b;
   --warning: #9a6b00;
   --danger-text: #d70015;
   --danger-fill: #ff453a;
 
-  --material-panel: rgba(248, 248, 250, 0.70);
-  --material-window: rgba(250, 250, 252, 0.80);
-  --material-menu: rgba(250, 250, 250, 0.90);
+  --material-panel: rgba(248, 249, 251, 0.74);
+  --material-window: rgba(250, 250, 252, 0.84);
+  --material-menu: rgba(250, 250, 250, 0.92);
   --material-modal: rgba(250, 250, 250, 0.97);
 
   /* 浅色下扇区用淡黑填充，标签用深色文字。 */
@@ -137,6 +140,13 @@ body {
   background: transparent;
 }
 
+/* 全局焦点兜底：按钮、链接、输入框在键盘导航下必须有可见焦点。
+   用零特异性的 :where，组件自己的 focus-visible 规则仍然优先。 */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--hairline-focus);
+  outline-offset: 2px;
+}
+
 @layer components {
   /* ---------- 窗口 / 面板表面 ---------- */
   .app-surface {
@@ -150,19 +160,16 @@ body {
        这里只叠一层淡色，`backdrop-filter` 在透明 WKWebView 里采不到桌面，
        保留它反而会把上面的叠色再模糊一次，所以不再使用。 */
     background: var(--material-panel);
+    /* 面板靠滚轮/键盘翻内容，粗滚动条挡视线又丑，直接不画。 */
+    scrollbar-width: none;
+  }
+  .app-surface--panel::-webkit-scrollbar {
+    display: none;
   }
   .app-surface--window {
     border-radius: var(--radius-window-main);
     /* 管理窗口也透出桌面（浅色下是磨砂白），侧边栏再叠一层深色。 */
     background: var(--material-window);
-  }
-  @media (prefers-reduced-transparency: reduce) {
-    .app-surface--panel,
-    .app-surface--window {
-      background: var(--bg-window);
-      backdrop-filter: none;
-      -webkit-backdrop-filter: none;
-    }
   }
 
   /* ---------- 输入 / 搜索 / 下拉 ---------- */
@@ -170,7 +177,7 @@ body {
     @apply h-[28px] w-full rounded-md border border-white/[0.08] bg-white/[0.05] px-[10px]
            text-[13px]/[18px] text-white outline-none placeholder:text-white/35
            transition-[border-color,box-shadow] duration-120 ease-out-soft
-           focus:border-accent-500/70 focus:shadow-[0_0_0_3px_rgba(232,163,61,0.30)];
+           focus:border-accent-500/70 focus:shadow-[0_0_0_3px_var(--focus-ring)];
   }
 
   /* ---------- 按钮 ---------- */
@@ -180,7 +187,7 @@ body {
            text-[13px]/[18px] font-medium outline-none
            transition-[background-color,transform,box-shadow] duration-100 ease-apple
            active:scale-[0.98] disabled:cursor-not-allowed
-           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+           focus-visible:shadow-[0_0_0_3px_var(--focus-ring)];
   }
   .btn-primary {
     @apply bg-accent-500 text-[#1C1C1E] hover:bg-accent-400 active:bg-accent-600
@@ -204,7 +211,7 @@ body {
            transition-[background-color,color,transform] duration-120 ease-out-soft
            hover:bg-white/[0.08] hover:text-white
            active:scale-[0.98] active:bg-white/[0.12]
-           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+           focus-visible:shadow-[0_0_0_3px_var(--focus-ring)];
   }
   .btn-icon-danger {
     @apply btn-icon hover:bg-danger-fill/10 hover:text-[#FF6969];
@@ -218,7 +225,7 @@ body {
     @apply inline-flex h-[24px] items-center rounded-[5px] px-[12px] text-[12px]/[16px]
            text-white/60 outline-none transition-colors duration-120 ease-out-soft
            hover:text-white/85
-           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+           focus-visible:shadow-[0_0_0_3px_var(--focus-ring)];
   }
   .seg-item-active {
     @apply bg-accent-500 font-medium text-[#1C1C1E] shadow-[0_1px_2px_rgba(0,0,0,0.3)];
@@ -228,7 +235,7 @@ body {
            px-[10px] text-[12px]/[16px] text-white/60 outline-none
            transition-colors duration-120 ease-out-soft
            hover:bg-white/[0.10] hover:text-white/85
-           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+           focus-visible:shadow-[0_0_0_3px_var(--focus-ring)];
   }
   .pill-active {
     @apply bg-accent-tint text-accent-tint-text ring-1 ring-accent-500/30;
@@ -242,7 +249,7 @@ body {
   .switch {
     @apply relative h-[17px] w-[28px] shrink-0 rounded-full outline-none
            transition-colors duration-150 ease-apple
-           focus-visible:shadow-[0_0_0_3px_rgba(232,163,61,0.35)];
+           focus-visible:shadow-[0_0_0_3px_var(--focus-ring)];
   }
   .switch-on {
     @apply bg-accent-500;
@@ -305,7 +312,7 @@ body {
   }
   .card-clip-selected {
     /* 选中态统一用品牌强调色（与按钮/开关/tab 同一套 accent，不再出现黄色描边） */
-    @apply border-accent-500 bg-accent-tint shadow-[0_0_0_1px_rgba(232,163,61,0.45)];
+    @apply border-accent-500 bg-accent-tint shadow-[0_0_0_1px_var(--hairline-focus)];
   }
   .card-clip-selected:hover {
     @apply bg-accent-tint;
@@ -322,6 +329,12 @@ body {
   .menu {
     /* overflow 保持 visible：标签子菜单（评审 U4）要飞出父级菜单边界。 */
     @apply min-w-[200px] overflow-visible rounded-md border border-white/[0.12] p-[5px] shadow-menu;
+    background: var(--material-menu);
+    -webkit-backdrop-filter: blur(28px) saturate(1.5);
+    backdrop-filter: blur(28px) saturate(1.5);
+  }
+  /* Toast 与菜单同一套材质；单独成类，减弱透明度时能一起关掉 blur。 */
+  .toast-surface {
     background: var(--material-menu);
     -webkit-backdrop-filter: blur(28px) saturate(1.5);
     backdrop-filter: blur(28px) saturate(1.5);
@@ -393,12 +406,12 @@ body {
 
 /* ================================================================== */
 /* Finder 环形盘动画（移植 Filee DonutMenu 时序，见                    */
-/* docs/REA-Filee-Ring-Integrated.md §4「圆环规则」）                  */
+/* README「三、环形文件转换」「圆环规则」）                  */
 /*                                                                    */
 /* 关键点：每个扇区绕**自己的径向中线**缩放，不是整环绕 Y 轴旋转；     */
 /* 中线角度通过内联变量 --ring-ax 传入，逐扇区的起动延迟由 JS 写成     */
 /* animation-delay（从 12 点顺时针展开）。                              */
-/* 没有翻面动画：运行态只有一面（§4）。                                  */
+/* 没有翻面动画：运行态只有一面（Filee 行为）。                                  */
 /* ================================================================== */
 @keyframes ring-layer-in {
   /* 首帧不停留在 0：动画一旦在隐藏的 webview 里冻住，整张盘就是透明的。
@@ -414,7 +427,7 @@ body {
 }
 
 @keyframes ring-sector-in {
-  /* 绕**圆心**缩放并带 6° 回正：Wheel §1.3「从中心缩放并带轻微旋转」。
+  /* 绕**圆心**缩放并带 6° 回正：Filee 行为「从中心缩放并带轻微旋转」。
    * 首帧不写 opacity:0——同 ring-layer-in，卡住时扇区会彻底消失。 */
   from {
     transform: rotate(-6deg) scale(0.18);
@@ -426,7 +439,7 @@ body {
   }
 }
 
-/* 点选后扇区向中心收缩，随后才出现进度环（文档 §1.4 #2）。 */
+/* 点选后扇区向中心收缩，随后才出现进度环（Filee 行为）。 */
 @keyframes ring-collapse {
   from {
     transform: scale(1);
@@ -442,7 +455,7 @@ body {
   animation: ring-collapse 280ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-/* 5s 交接：收缩并淡出，把长任务交给系统通知（Filee §1.4 #10）。 */
+/* 5s 交接：收缩并淡出，把长任务交给系统通知（Filee 行为约定）。 */
 @keyframes ring-handoff {
   from {
     transform: scale(1);
@@ -458,13 +471,13 @@ body {
   animation: ring-layer-in 160ms ease-out both;
 }
 
-/* EaseOutBack 等效：轻微过冲后落定（Wheel §1.3：0.42s / 逐项 0.028s）。 */
+/* EaseOutBack 等效：轻微过冲后落定（Filee 行为：0.42s / 逐项 0.028s）。 */
 .ring-sector-in {
   transform-box: view-box;
   animation: ring-sector-in 420ms cubic-bezier(0.22, 1.36, 0.4, 1) both;
 }
 
-/* 关闭：单扇区 0.16s、逐项延迟 0.01s、EaseInCubic（Wheel §1.3）。 */
+/* 关闭：单扇区 0.16s、逐项延迟 0.01s、EaseInCubic（Filee 行为）。 */
 @keyframes ring-sector-out {
   from {
     transform: scale(1);
@@ -516,60 +529,41 @@ body {
 }
 
 /* ================================================================== */
-/* 输入法切换提示（imehud 窗口）                                       */
+/* 辅助功能：减弱透明度 / 减弱动态效果                                  */
 /* ================================================================== */
 
-/* 窗口本身透明，胶囊由下面两条规则画；提示恒用深色——它浮在任意 App 之上，
-   跟随浅色主题会在白底上糊成一片（与环形盘同理）。 */
-.app-surface--hud {
-  background: transparent;
-  border: none;
-}
-
-.ime-hud-in,
-.ime-hud-out {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  height: 40px;
-  padding: 0 14px;
-  overflow: hidden;
-  border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(24, 24, 26, 0.78);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
-}
-
-@keyframes ime-hud-in {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 8px, 0) scale(0.92);
+/* 减弱透明度：所有材质变量换成实色，取消 webview 内叠加的模糊。
+   原生毛玻璃仍在窗口下方，但被这层实色完全盖住，桌面不会再透进来。
+   媒体查询与原生读数（`NSWorkspace` → 根节点类）双通道，任一命中即生效。 */
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  :root.light {
+    --material-panel: var(--bg-window);
+    --material-window: var(--bg-window);
+    --material-menu: var(--bg-raised);
+    --material-modal: var(--bg-raised);
   }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
+  .menu,
+  .toast-surface,
+  .app-surface--panel,
+  .app-surface--window {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
-@keyframes ime-hud-out {
-  from {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translate3d(0, -6px, 0) scale(0.98);
-  }
+:root.reduce-transparency {
+  --material-panel: var(--bg-window);
+  --material-window: var(--bg-window);
+  --material-menu: var(--bg-raised);
+  --material-modal: var(--bg-raised);
 }
-
-/* 三段时长与 Rust 的收窗时间一致：进场 200 + 停留 1100 + 出场 240。 */
-.ime-hud-in {
-  animation: ime-hud-in 200ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
-}
-
-.ime-hud-out {
-  animation: ime-hud-out 240ms cubic-bezier(0.4, 0, 1, 1) both;
+:root.reduce-transparency .menu,
+:root.reduce-transparency .toast-surface,
+:root.reduce-transparency .app-surface--panel,
+:root.reduce-transparency .app-surface--window {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -577,7 +571,20 @@ body {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    /* 只压时长不压延迟，逐项错峰会变成「先隐身、再瞬移」；一并归零。 */
+    animation-delay: 0ms !important;
     transition-duration: 100ms !important;
+  }
+  /* 进度必须仍可读：旋转指示保持 1.4s/圈，而不是被压成静止。 */
+  .animate-spin {
+    animation-duration: 1.4s !important;
+  }
+  /* 收尾只淡不缩：环形盘交接与点选收缩改用纯透明度关键帧。 */
+  .ring-handoff,
+  .ring-collapse {
+    animation-name: ring-center-out !important;
+    animation-duration: 120ms !important;
+    animation-timing-function: linear !important;
   }
   .btn:active,
   .switch-thumb {
@@ -615,14 +622,10 @@ body {
 .light [class~="text-danger-soft"] { color: var(--danger-text); }
 .light [class~="text-success-soft"] { color: var(--success); }
 .light [class~="text-warning"] { color: var(--warning); }
-/* 强调色文字：亮琥珀在浅底上对比不足，换深一档。
- * 注意：JSX 实际用的是 text-accent-500 / text-accent-400（侧边栏选中图标、
- * 收藏星标、Toast 链接），这三档必须一起映射 —— 只写裸 text-accent 等于没生效，
- * 浅色下仍是 #E8A33D/#F0B35A 落在近白底，对比度仅 ~2:1（WCAG AA 需 4.5:1）。
- * 取 accent-800 #8A5816，白底约 6:1。 */
+/* 强调色文字：浅底上用深一档的冷蓝，白底约 6:1。 */
 .light [class~="text-accent"],
 .light [class~="text-accent-500"],
-.light [class~="text-accent-400"] { color: #8a5816; }
+.light [class~="text-accent-400"] { color: #2f5fcc; }
 
 /* 类型徽章：深色下是「14% 彩底 + 同系亮字」，浅底下亮字读不清，
  * 底色保持淡彩、文字换同系深色（unknown 原本是 50% 白，浅底下直接消失）。 */
@@ -741,9 +744,18 @@ body {
 .light .card-clip:hover { background: rgba(0, 0, 0, 0.06); }
 .light .card-clip-selected,
 .light .card-clip-selected:hover {
-  border-color: var(--accent-500);
+  border-color: #2f5fcc;
   background: var(--accent-tint);
 }
+
+/* 浅色下主按钮用更深的蓝 + 白字，保证 13px 文本 ≥4.5:1。 */
+.light .btn-primary {
+  background: #3f72e8;
+  color: #ffffff;
+}
+.light .btn-primary:hover { background: #3565d6; }
+.light .btn-primary:active { background: #2f5fcc; }
+.light .btn-primary:disabled { background: rgba(63, 114, 232, 0.32); color: rgba(255, 255, 255, 0.75); }
 
 .light .menu { border-color: rgba(0, 0, 0, 0.12); }
 .light .menu-item { color: rgba(0, 0, 0, 0.85); }

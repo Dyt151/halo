@@ -24,5 +24,3 @@ pub const CONFIG_CHANGED: &str = "config://changed";
 pub const PASTE_FINISHED: &str = "clipboard://paste-finished";
 /// 模块向核心发布的总线事件（广播给前端）。
 pub const MODULE_EVENT: &str = "module://event";
-/// 模块向核心发送请求并期待核心响应（RPC）。
-pub const MODULE_RPC: &str = "module://rpc";

@@ -16,6 +16,8 @@ const RING_FORMATS_MARKER_KEY: &str = "migrated_v7_ring_formats";
 /// v8：状态栏面板新增网络/蓝牙，旧配置的模块列表里补齐这两项（只跑一次，
 /// 用户之后自己取消勾选不会被加回来）。
 const STATUSBAR_NETWORK_MARKER_KEY: &str = "migrated_v8_statusbar_network";
+/// v9：状态栏面板新增 VPN（代理），补齐到网络后面。
+const STATUSBAR_VPN_MARKER_KEY: &str = "migrated_v9_statusbar_vpn";
 
 /// 丢掉指向已删除格式的预设（ico / qoi / md / odt …）。
 ///
@@ -125,6 +127,27 @@ fn migrate_user_defaults(
             }
         }
         set_marker(conn, STATUSBAR_NETWORK_MARKER_KEY)?;
+    }
+
+    if !marker_set(conn, STATUSBAR_VPN_MARKER_KEY)? {
+        // 只补给「还留着网络模块」的旧配置：列表为空或网络被用户取消勾选，
+        // 都当成主动选择，不硬塞新模块。
+        let network_at = config
+            .statusbar
+            .sections
+            .iter()
+            .position(|id| id == "network");
+        let has_vpn = config.statusbar.sections.iter().any(|id| id == "vpn");
+        if let Some(index) = network_at.filter(|_| !has_vpn) {
+            config
+                .statusbar
+                .sections
+                .insert(index + 1, "vpn".to_string());
+            config.statusbar.normalize();
+            persist_config(conn, config)?;
+            changed = true;
+        }
+        set_marker(conn, STATUSBAR_VPN_MARKER_KEY)?;
     }
 
     Ok(changed)
@@ -377,6 +400,8 @@ mod tests {
     }
 
     /// v8 只把网络/蓝牙并进旧列表一次；用户之后取消勾选不会被加回来。
+    ///
+    /// v9（VPN）在同一趟里跑，所以期望值里带 vpn：它排在 network 后面。
     #[test]
     fn v8_adds_network_and_bluetooth_once() {
         let conn = memory_db();
@@ -395,6 +420,7 @@ mod tests {
             vec![
                 "battery".to_string(),
                 "network".to_string(),
+                "vpn".to_string(),
                 "bluetooth".to_string(),
                 "volume".to_string(),
                 "audio_input".to_string(),
@@ -405,5 +431,57 @@ mod tests {
         config.statusbar.sections.retain(|id| id != "bluetooth");
         assert!(!migrate_user_defaults(&conn, &mut config).expect("第二次迁移"));
         assert!(!config.statusbar.sections.iter().any(|id| id == "bluetooth"));
+    }
+
+    /// v9 只在 network 后面补一格 vpn；标记只写一次，用户之后取消勾选不回来。
+    #[test]
+    fn v9_adds_vpn_only_next_to_network() {
+        // 前面的迁移标记先补上，这一趟只测 v9 自己。
+        fn only_v9() -> (rusqlite::Connection, Config) {
+            let conn = memory_db();
+            for key in [
+                MIGRATION_MARKER_KEY,
+                RING_FORMATS_MARKER_KEY,
+                STATUSBAR_NETWORK_MARKER_KEY,
+            ] {
+                set_marker(&conn, key).expect("标记");
+            }
+            let mut config = Config::default();
+            config.migrate();
+            (conn, config)
+        }
+
+        // 网络模块被用户取消勾选：不硬塞新模块。
+        let (conn, mut config) = only_v9();
+        config.statusbar.sections = vec!["volume".into(), "input_source".into()];
+        assert!(!migrate_user_defaults(&conn, &mut config).expect("没有网络模块，不该改"));
+        assert_eq!(
+            config.statusbar.sections,
+            vec!["volume".to_string(), "input_source".to_string()]
+        );
+
+        let (conn, mut config) = only_v9();
+        config.statusbar.sections = vec![
+            "battery".into(),
+            "network".into(),
+            "volume".into(),
+            "input_source".into(),
+        ];
+        assert!(migrate_user_defaults(&conn, &mut config).expect("补 vpn"));
+        assert_eq!(
+            config.statusbar.sections,
+            vec![
+                "battery".to_string(),
+                "network".to_string(),
+                "vpn".to_string(),
+                "volume".to_string(),
+                "input_source".to_string(),
+            ]
+        );
+
+        // 标记已写：之后用户自己取消勾选 vpn，不会被加回来。
+        config.statusbar.sections.retain(|id| id != "vpn");
+        assert!(!migrate_user_defaults(&conn, &mut config).expect("第二次迁移"));
+        assert!(!config.statusbar.sections.iter().any(|id| id == "vpn"));
     }
 }

@@ -32,6 +32,14 @@ pub trait ClipboardPort: Send + Sync {
     fn change_count(&self) -> Result<u64, ClipError>;
     /// 前台应用名（用于来源展示，无法获取时返回 `None`）。
     fn frontmost_app(&self) -> Option<String>;
+    /// 当前内容是否来自 iCloud 通用剪贴板（另一台 Apple 设备接力）。
+    fn is_remote_clipboard(&self) -> bool {
+        false
+    }
+    /// 来源 App 是否把内容标记为机密/临时（nspasteboard.org 惯例），不应记录。
+    fn is_concealed(&self) -> bool {
+        false
+    }
 }
 
 /// 创建当前平台的剪贴板端口。
@@ -56,9 +64,10 @@ pub fn platform_port() -> Box<dyn ClipboardPort> {
 }
 
 /// 未支持平台的空实现（兜底）。
-#[allow(dead_code)]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 struct UnsupportedPort;
 
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 impl ClipboardPort for UnsupportedPort {
     fn read(&self) -> Result<ClipContent, ClipError> {
         Err(ClipError::UnsupportedType)

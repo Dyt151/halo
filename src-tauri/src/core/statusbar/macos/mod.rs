@@ -1,20 +1,30 @@
 //! macOS 实现：电池 / 音量 / 输入法走公开框架，网络 / 蓝牙见各模块注释。
 
 mod audio;
+mod autoswitch;
 mod battery;
 mod bluetooth;
 mod input_source;
 mod network;
 mod powerui;
+mod proxy;
 mod smc;
 
 use super::cf;
 use super::future;
-use super::{AudioLevels, AudioScope, BatteryDetails, GlyphState, InputSources, StatusBarState, WifiScan};
+use super::{
+    AudioLevels, AudioScope, BatteryDetails, GlyphState, InputSources, ProxyGroup, ProxyNode,
+    ProxyOutcome, ProxyPage, ProxySpeed, StatusBarState, WifiScan,
+};
 
 /// 读输入法列表。TSM 只能在主线程调用，由命令层负责切回主线程。
 pub fn input_sources() -> InputSources {
     input_source::state()
+}
+
+/// 打开输入法自带的设置 App（微信输入法的 `WeTypeSettings.app`）。
+pub fn open_ime_settings(path: &str) -> Result<(), String> {
+    input_source::open_settings_app(path)
 }
 
 pub fn snapshot(sources: InputSources) -> StatusBarState {
@@ -40,11 +50,48 @@ pub fn glyph_state() -> GlyphState {
         bluetooth_available: powered.is_some(),
         bluetooth_powered: powered.unwrap_or(false),
         audio_output: audio::output_state(),
+        // 代理状态只读缓存：现读要起三个 networksetup，图标每两秒就重画一次。
+        proxy: proxy::bar_state(),
     }
+}
+
+/// 接管状态的观察线程（只在 macOS 有实体；重复调用只起一条）。
+pub fn start_proxy_watcher() {
+    proxy::spawn_watcher();
+}
+
+pub fn autoswitch_config() -> super::AutoSwitchConfig {
+    autoswitch::config()
+}
+
+pub fn autoswitch_set_config(config: super::AutoSwitchConfig) -> ProxyOutcome {
+    autoswitch::set_config(config)
+}
+
+pub fn autoswitch_set_router_secret(secret: String) -> ProxyOutcome {
+    autoswitch::set_router_secret(secret)
+}
+
+pub fn autoswitch_state() -> super::AutoSwitchState {
+    autoswitch::state()
+}
+
+pub fn autoswitch_check_now() -> super::AutoSwitchState {
+    autoswitch::check_now()
+}
+
+/// 自动换节点巡检线程（重复调用只起一条；配置关闭时线程空转）。
+pub fn start_autoswitch_worker() {
+    autoswitch::spawn_worker();
 }
 
 pub fn set_volume(scope: AudioScope, volume: f64) -> Result<(), String> {
     audio::set_volume(scope, volume)
+}
+
+/// 默认输出音量（0..1），音量反馈轮询用。
+pub fn output_volume() -> Option<f64> {
+    audio::output_volume().map(f64::from)
 }
 
 /// 详情页读数：注册表 + IOPS，几毫秒，不碰 `system_profiler`。
@@ -128,6 +175,38 @@ pub fn set_wifi(enabled: bool) -> Result<(), String> {
 
 pub fn set_bluetooth(enabled: bool) -> Result<(), String> {
     bluetooth::set_power(enabled)
+}
+
+/// VPN 二级页读数：起几个短命子进程，只在页面打开和点刷新时调用。
+pub fn proxy_page() -> super::ProxyPage {
+    proxy::page()
+}
+
+/// 网速轮询：面板可见时两秒一次，比 [`proxy_page`] 便宜得多。
+pub fn proxy_speed() -> super::ProxySpeed {
+    proxy::speed()
+}
+
+pub fn proxy_set_takeover(enabled: bool) -> super::ProxyOutcome {
+    proxy::set_takeover(enabled)
+}
+
+pub fn proxy_set_mode(mode: &str) -> super::ProxyOutcome {
+    proxy::set_mode(mode)
+}
+
+pub fn proxy_select_node(group: &str, node: &str) -> super::ProxyOutcome {
+    proxy::select_node(group, node)
+}
+
+/// 测一个组里全部节点的延迟，前端在此期间显示转圈。
+pub fn proxy_latency(group: &str) -> Vec<super::ProxyNode> {
+    proxy::latency(group)
+}
+
+/// 把 FlClash 的主界面带到前台（核心没跑、或要改订阅时用户自己操作）。
+pub fn proxy_open_app() -> super::ProxyOutcome {
+    proxy::open_app()
 }
 
 /// 申请 Wi‑Fi 名称授权：返回正版的三态结果，前端据此决定要不要转去系统设置。

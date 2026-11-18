@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "install:local": "bash scripts/install-local.sh"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.10.9",

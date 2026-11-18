@@ -1,12 +1,12 @@
 /**
- * 设置页圆环编辑器（`docs/REA-Filee-Ring-Integrated.md` §4「圆环规则」）。
+ * 设置页圆环编辑器（README「三、环形文件转换」「圆环规则」）。
  *
  * 受控视图：只画当前快照、上报指针/键盘意图，不读转换引擎、不写磁盘、
  * 不自己算第二套几何——绘制与命中都用 `lib/ringGeometry`（与运行态环形盘
  * 同一份代码），因此「预览落点」与「drop 后模型」天然一致。
  *
  * 拖动会话（跨视图的 chip → 环、环 → 候选面板）由宿主 `RingSettings` 统一
- * 协调（规范 §4.2：两个视图不互相引用）。
+ * 协调（Filee 行为：两个视图不互相引用）。
  */
 import { useState } from "react";
 import {
@@ -24,7 +24,7 @@ const C = SIDE / 2;
 const R = RING_GEOM.R;
 const r = innerRadius(R);
 
-/** 铅笔按钮直径：命中半径 13px（Editor §1.5），所以直径 26px。 */
+/** 铅笔按钮直径：命中半径 13px（Filee 行为），所以直径 26px。 */
 const PENCIL_PX = 26;
 
 /**
@@ -86,7 +86,7 @@ export default function RingEditor({
       onPointerLeave={() => setHover(-1)}
     >
       <svg viewBox={`0 0 ${SIDE} ${SIDE}`} className="h-full w-full overflow-visible">
-        {/* 空环：保留完整圆形落点区域（规范 §3.3），用内外两条虚线暗示可放置 */}
+        {/* 空环：保留完整圆形落点区域（Filee 行为），用内外两条虚线暗示可放置 */}
         {n === 0 && (
           <>
             <circle
@@ -134,7 +134,7 @@ export default function RingEditor({
               onPointerEnter={() => setHover(i)}
               onPointerDown={(e) => onSlicePointerDown?.(id, i, e)}
               onContextMenu={(e) => {
-                // 右键扇区 = 编辑该预设，与铅笔同一入口（Editor §1.5）。
+                // 右键扇区 = 编辑该预设，与铅笔同一入口（Filee 行为）。
                 e.preventDefault();
                 onSliceEdit?.(id);
               }}

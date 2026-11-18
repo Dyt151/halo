@@ -28,5 +28,15 @@ Changes made to the original:
   aborting, so cancellation restores the captured limit. A small C-ABI shim
   (halo_powerui_shim.m) and the Rust state machine around it are Halo's own,
   as are the Charge to Full Now row layout and copy.
+- The Wi-Fi page's classification and copy are ported behaviour-for-
+  behaviour from Status Trio's Swift sources (`WiFiNetworkModels.swift`,
+  `StatusMappings.wifiBars`, `PanelDetailMapper.wifi`,
+  `WiFiKnownNetworkProvider.swift`) into Rust + TypeScript, because Halo has
+  no AppKit: candidates merge by (SSID, CWSecurity) with the whitespace-
+  preserving identity, rows sort connected → RSSI → name → security raw
+  value, bars use the -70/-78/-88 thresholds, and the Chinese labels follow
+  `Resources/zh-Hans.lproj/Localizable.strings`. Like the original, Halo does
+  not join networks itself — every row except the current association opens
+  the system Wi-Fi pane, so there is no password field in the panel.
 - The ring/volume/battery state machine, the polling loop, the tooltip text
   and every setting exposed in the UI are Halo's own.

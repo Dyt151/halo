@@ -4,7 +4,7 @@
 # 前置（一次性）：
 #   1. `gh auth login`（本机已有 gh）
 #   2. Xcode 生成代码签名证书，tauri.conf.json 的 signingIdentity 指向它
-#      （macOS 更新器拒绝 ad-hoc 签名的包，详见 docs/ 或 tauri updater 文档）
+#      （macOS 更新器拒绝 ad-hoc 签名的包，详见 tauri updater 文档）
 #   3. 私钥在 ~/.tauri/halo-updater.key（`npx tauri signer generate` 生成，
 #      对应的 pubkey 已写入 tauri.conf.json plugins.updater.pubkey）
 #

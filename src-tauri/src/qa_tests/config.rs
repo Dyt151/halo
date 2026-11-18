@@ -36,9 +36,9 @@ fn new_feature_defaults() {
     assert!(c.sound_enabled);
     assert!(c.num_hotkey_enabled);
     assert!(c.stack_enabled);
-    assert_eq!(c.board_style, "horizontal");
+    assert_eq!(c.board_style, "list");
     // 与 settings.rs 各默认值函数对齐。
-    assert_eq!(c.board_height_scale, 30);
+    assert_eq!(c.board_height_scale, 50);
     assert_eq!(c.board_position, "bottom");
     assert_eq!(c.text_preview, "rich");
     assert_eq!(c.history_ttl_days, 0);
@@ -53,7 +53,7 @@ fn config_serde_defaults_for_new_fields() {
     assert_eq!(c.max_items, 100);
     assert!(c.auto_close_after_paste);
     assert!(c.num_hotkey_enabled);
-    assert_eq!(c.board_style, "horizontal");
+    assert_eq!(c.board_style, "list");
     assert!(c.app_blacklist.is_empty());
 }
 

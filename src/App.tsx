@@ -9,14 +9,15 @@ import {
   onModuleStateChanged,
   onSyncCompleted,
 } from "./lib/events";
-import { isPanelWindow, isRingWindow, isInputHudWindow, isTrayPanelWindow } from "./lib/windows";
+import { isPanelWindow, isRingWindow, isTrayPanelWindow, isVoiceCmdWindow } from "./lib/windows";
+import { useDisplayPreferences } from "./lib/useDisplayPreferences";
 import { getDialog } from "./lib/dialog";
 import { isTextEditing, isTextEditingAt } from "./lib/focus";
 import Panel from "./windows/Panel";
 import MainWindow from "./windows/MainWindow";
 import RingWindow from "./windows/RingWindow";
 import TrayPanel from "./windows/TrayPanel";
-import InputHud from "./windows/InputHud";
+import VoiceCmdBar from "./windows/VoiceCmdBar";
 import DialogHost from "./components/DialogHost";
 import ToastHost from "./components/ToastHost";
 
@@ -25,12 +26,14 @@ import ToastHost from "./components/ToastHost";
  *
  * - `panel`：快捷键唤出的剪贴板面板（只呈现卡片流）。
  * - `ring`：Finder 环形转换盘（现场浮动面板）。
+ * - `cmdbar`：语音指令条（唯一会抢键盘的浮层，听写要落在它的输入框里）。
  * - `main`：主窗口 = 纯设置中心。
  *
  * 两个窗口是独立 webview，各自挂载一份 React，但共享同一份后端状态；
  * 因此初始化（拉配置/拉模块/订阅事件）在两边都要跑。
  */
 export default function App() {
+  useDisplayPreferences();
   const refresh = useClipStore((s) => s.refresh);
   const loadConfig = useClipStore((s) => s.loadConfig);
   const loadModules = useClipStore((s) => s.loadModules);
@@ -43,7 +46,7 @@ export default function App() {
     panel: isPanelWindow(),
     ring: isRingWindow(),
     tray: isTrayPanelWindow(),
-    hud: isInputHudWindow(),
+    cmd: isVoiceCmdWindow(),
   }));
   const panel = winKind.panel;
 
@@ -56,14 +59,13 @@ export default function App() {
     const apply = () => {
       const light =
         !winKind.ring &&
-        !winKind.hud &&
         (theme === "light" || (theme !== "dark" && media.matches));
       root.classList.toggle("light", light);
     };
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [theme, winKind.ring, winKind.hud]);
+  }, [theme, winKind.ring]);
 
   useEffect(() => {
     void refresh();
@@ -106,9 +108,9 @@ export default function App() {
   // 因此 Rust 侧菜单只负责转发事件，具体语义交给当前窗口的前端。
   // 同时监听键盘：WKWebView 里 ⌘Z 不一定能命中菜单项（焦点在自绘元素上时）。
   useEffect(() => {
-    // 环形盘和输入法提示都是现场窗口，根本没有「历史列表」这个概念：
+    // 环形盘和语音指令条都是现场窗口，根本没有「历史列表」这个概念：
     // 在这里按 ⌘Z 不该去撤销一条用户看不见的删除。
-    if (winKind.ring || winKind.hud) return;
+    if (winKind.ring || winKind.cmd) return;
 
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
@@ -145,14 +147,14 @@ export default function App() {
       window.removeEventListener("keydown", onKey);
       void Promise.all(unlisteners).then((fns) => fns.forEach((fn) => fn()));
     };
-  }, [undo, redo, winKind.ring]);
+  }, [undo, redo, winKind.ring, winKind.cmd]);
 
   return (
     <>
       {winKind.ring ? (
         <RingWindow />
-      ) : winKind.hud ? (
-        <InputHud />
+      ) : winKind.cmd ? (
+        <VoiceCmdBar />
       ) : winKind.tray ? (
         <TrayPanel />
       ) : panel ? (
@@ -162,7 +164,7 @@ export default function App() {
       )}
       <DialogHost />
       {/* 面板自带贴边的 Toast 容器（ToastHost variant="panel"），这里只服务管理窗口。 */}
-      {!panel && !winKind.ring && !winKind.tray && !winKind.hud && <ToastHost />}
+      {!panel && !winKind.ring && !winKind.tray && !winKind.cmd && <ToastHost />}
     </>
   );
 }

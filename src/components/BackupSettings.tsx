@@ -76,7 +76,7 @@ export default function BackupSettings() {
 
   return (
     <div className="space-y-[16px]">
-      <CardGroup title="数据位置" subtitle="Halo 全部数据都在本机这个目录">
+      <CardGroup title="数据位置">
         <Row label="数据目录">
           <div className="flex items-center gap-[6px]">
             <Btn
@@ -97,17 +97,13 @@ export default function BackupSettings() {
           <p className="mt-[8px] break-all font-mono text-[12px]/[16px] text-white/45">{dataDir}</p>
         )}
         <Divider className="my-[8px]" />
-        <Notice tone="info">
-          备份与同步不同：这里不联网、不做端到端加密。备份里可能含敏感剪贴内容，
-          请存到已加密的磁盘。
-        </Notice>
+        <Notice tone="info">备份内含敏感剪贴内容，请存到安全位置。</Notice>
       </CardGroup>
 
-      <CardGroup title="导出备份" subtitle="打包整库，可拷到外接盘或新 Mac">
+      <CardGroup title="导出备份">
         <div className="space-y-[2px]">
           <ToggleRow
             label="包含图片"
-            hint="把剪贴板里的图片一并复制进包；迁移到新机时必须勾选"
             checked={includeFiles}
             onChange={setIncludeFiles}
           />
@@ -130,11 +126,10 @@ export default function BackupSettings() {
         )}
       </CardGroup>
 
-      <CardGroup title="导入备份" subtitle="从包目录恢复历史（按内容去重，可重复导入）">
+      <CardGroup title="导入备份">
         <div className="space-y-[2px]">
           <ToggleRow
             label="同时恢复配置"
-            hint="把包里的设置也写回本机；不勾选则只恢复历史，保留当前设置"
             checked={restoreConfig}
             onChange={setRestoreConfig}
           />

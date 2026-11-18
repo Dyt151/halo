@@ -229,16 +229,8 @@ export default function PermissionSection() {
     }
   };
 
-  /** 定位权限：只影响状态栏读 Wi-Fi 名称，没授权也要让用户知道「这是可选的」。 */
   const locationRow = (
-    <Row
-      label="定位服务"
-      hint={
-        locationNeedsAction(location)
-          ? "仅用于状态栏显示 Wi-Fi 名称；不授权不影响其它功能"
-          : "仅用于状态栏显示 Wi-Fi 名称"
-      }
-    >
+    <Row label="定位服务">
       <Status
         state={location === "authorized" ? "granted" : location === null ? "unknown" : "missing"}
         granted={locationLabel(location)}
@@ -259,7 +251,6 @@ export default function PermissionSection() {
   return (
     <CardGroup
       title="权限与授权"
-      subtitle="系统权限集中在这里，一次授权即可；在系统设置里改完回来点刷新"
       action={
         <Btn size="sm" onClick={() => void refresh()}>
           刷新
@@ -267,10 +258,7 @@ export default function PermissionSection() {
       }
     >
       <div className="space-y-[2px]">
-        <Row
-          label="辅助功能"
-          hint="回贴要模拟 ⌘V；Option＋拖动转换与桌面右键接管也要靠它。未授权时这几项都不工作"
-        >
+        <Row label="辅助功能">
           <Status
             state={accessibility}
             granted="已授权"
@@ -294,13 +282,7 @@ export default function PermissionSection() {
 
         <Divider />
 
-        <Row
-          label="开机启动"
-          hint={
-            loginHint ??
-            "由系统登录项（SMAppService）托管，登录后在后台待命，不弹窗口"
-          }
-        >
+        <Row label="开机启动" hint={loginHint ?? undefined}>
           <Status
             state={loginItem}
             granted="已启用"
@@ -324,11 +306,9 @@ export default function PermissionSection() {
         <Row
           label="Finder 扩展"
           hint={
-            finder === "granted"
-              ? "已启用：Finder 右键直接出现「新建文件 / 在终端中打开」"
-              : finderInfo?.supported && finderInfo.appex_present === false
-                ? "当前是开发构建，App 内没有 Finder 扩展；打包后会随 App 一起安装"
-                : "未启用时右键菜单里看不到 Halo 的动作"
+            finderInfo?.supported && finderInfo.appex_present === false
+              ? "当前是开发构建，App 内没有 Finder 扩展"
+              : undefined
           }
         >
           <Status
@@ -360,16 +340,6 @@ export default function PermissionSection() {
           <Notice tone="info">{message}</Notice>
         </div>
       )}
-
-      <p className="mt-[12px] text-[12px]/[16px] text-white/45">
-        系统会缓存辅助功能授权状态：在系统设置里勾选后回到本页点「刷新」即可，
-        无需重启 App；若仍未生效，可退出并重新打开 Halo。
-      </p>
-      <p className="mt-[4px] text-[12px]/[16px] text-white/45">
-        本地重新打包会重签名 App，macOS 会把授权当成「另一个程序」：列表里可能还
-        留着旧条目但不再生效。遇到「之前能用、重打包后失灵」时，先在列表里用减号
-        移除 Halo，再点「请求授权」重新加入。
-      </p>
     </CardGroup>
   );
 }

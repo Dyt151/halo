@@ -66,6 +66,7 @@ impl AppState {
             }
         }
 
+        let remote = event.remote;
         // 敏感内容统一走 `sensitivity::apply`：捕获、导入等所有入库路径共用
         // 同一套策略，避免某条旁路把密码按明文存下来。
         let (sensitive, content) =
@@ -73,8 +74,13 @@ impl AppState {
 
         let hash = hash_content(&content);
         // 来源 App 图标导出（尽力而为，失败静默降级为 None）。
-        let source_app_icon = crate::core::appicon::export_frontmost_app_icon()
-            .map(|p| p.to_string_lossy().into_owned());
+        // 通用剪贴板来自另一台设备，前台 App 的图标不是真实来源，直接留空。
+        let source_app_icon = if remote {
+            None
+        } else {
+            crate::core::appicon::export_frontmost_app_icon()
+                .map(|p| p.to_string_lossy().into_owned())
+        };
         let item = ClipItem {
             id: 0,
             content_type: content_type_of(&content),
@@ -101,13 +107,8 @@ impl AppState {
                 let payload = serde_json::to_value(&saved).unwrap_or(Value::Null);
 
                 // 复制入库成功时按配置播放提示音。
-                // 注意：本方法跑在 Tokio 工作线程，AppKit/NSSound 必须回主线程
-                //（在非主线程调 NSSound beep 会崩掉整个事件循环）。
                 if cfg.sound_enabled {
-                    let app = self.app.clone();
-                    let _ = app.run_on_main_thread(move || {
-                        crate::core::sound::play_system_sound();
-                    });
+                    crate::core::sound::play_system_sound();
                 }
 
                 // 通知前端（clipboard://changed）与进程内总线（history://created）。
@@ -173,12 +174,7 @@ impl AppState {
     fn after_paste_ok(&self) {
         let cfg = self.config.get();
         if cfg.sound_enabled {
-            // 与复制入库同理由：统一回主线程播放（粘贴命令本身虽在主线程，
-            // 但批量粘贴等路径可能来自其它线程）。
-            let app = self.app.clone();
-            let _ = app.run_on_main_thread(move || {
-                crate::core::sound::play_system_sound();
-            });
+            crate::core::sound::play_system_sound();
         }
         // 只通知前端：面板窗口在粘贴成功时由前端播完 140ms 收起动画再 hide
         // （后端立即 hide 会把动画与 Toast 一起掐掉）。主窗口不受影响。

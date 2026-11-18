@@ -66,8 +66,9 @@ enum Sensor {
 pub struct PowerSensors {
     pub system_watts: Option<f64>,
     pub input_watts: Option<f64>,
-    /// 内置屏幕背光（`PDBR`）：正版用它画「屏幕」分支，本版的详情页还没有这一档。
-    #[allow(dead_code)]
+    /// 内置屏幕背光（`PDBR`）：正版用它画「屏幕」分支，本版的详情页还没有这一档，
+    /// 目前只在真机自检里读取。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub display_watts: Option<f64>,
     pub battery_volts: Option<f64>,
     pub battery_amps: Option<f64>,

@@ -6,28 +6,28 @@ export default {
   theme: {
     extend: {
       colors: {
-        /* 强调色：琥珀色阶（品牌色，仅用于主操作 / 选中态 / 聚焦光环） */
+        /* 强调色：单一冷色。琥珀只属于环形转换 / Finder 拖拽。 */
         accent: {
-          DEFAULT: "#E8A33D",
-          50: "#FDF6EC",
-          100: "#F9E8CD",
-          200: "#F2D0A0",
-          300: "#EDB874",
-          400: "#F0B35A",
-          500: "#E8A33D",
-          600: "#D68F2B",
-          700: "#B3741F",
-          800: "#8A5816",
-          900: "#5F3D10",
-          on: "#1C1C1E",
-          tint: "rgba(232,163,61,0.14)",
-          "tint-text": "#F0B35A",
-          disabled: "rgba(232,163,61,0.32)",
+          DEFAULT: "#5B8DFF",
+          50: "#EEF3FF",
+          100: "#DCE7FF",
+          200: "#B9CFFF",
+          300: "#94B4FF",
+          400: "#7AA5FF",
+          500: "#5B8DFF",
+          600: "#3F72E8",
+          700: "#3059B8",
+          800: "#2F5FCC",
+          900: "#1F3C7A",
+          on: "#0B0D12",
+          tint: "rgba(91,141,255,0.15)",
+          "tint-text": "#9DBCFF",
+          disabled: "rgba(91,141,255,0.30)",
         },
-        /* 背景层级（对照 NSColor dark） */
-        win: "#1E1E1E",
-        group: "#2C2C2E",
-        raised: "#3A3A3C",
+        /* 背景层级：走 CSS 变量，深/浅色同一套类名。 */
+        win: "var(--bg-window)",
+        group: "var(--bg-group)",
+        raised: "var(--bg-raised)",
         /* 预览正文：走 CSS 变量，深色 #E8E8ED / 浅色 #1C1C1E（清单 25）。
          * 写死字面量会让浅色模式下的卡片正文白底白字（已踩过一次）。 */
         preview: "var(--text-preview)",
@@ -75,7 +75,7 @@ export default {
         menu: "0 0 0 0.5px rgba(0,0,0,0.55), 0 8px 32px rgba(0,0,0,0.50)",
         popover: "0 0 0 0.5px rgba(0,0,0,0.5), 0 12px 40px rgba(0,0,0,0.55)",
         modal: "0 0 0 0.5px rgba(0,0,0,0.5), 0 24px 80px rgba(0,0,0,0.60)",
-        "select-ring": "0 0 0 1px rgba(232,163,61,0.45)",
+        "select-ring": "0 0 0 1px var(--hairline-focus)",
       },
       keyframes: {
         "panel-in": {

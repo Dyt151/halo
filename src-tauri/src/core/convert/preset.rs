@@ -1,12 +1,12 @@
 //! 转换预设（Preset）：动作身份不是目标格式字符串，而是一份完整配方。
 //!
-//! 对照 docs/REA-Filee-Conversion.md §2.2 / §8.1：
+//! 对照 README「三、环形文件转换」：
 //! - `target` 只是配方里的一项，另外还有图像选项和输出规则；
 //! - 因此「两个 JPG 动作」可以有不同的质量和命名，互不影响；
 //! - `SameAsSource` 用 `"*"` 表示「目标按每个源文件自己的格式解析」，
 //!   它不是「无需转换」：JPG→JPG 降质量、PNG→PNG 重编码都是合法任务。
 //!
-//! 只放当前真实支持的字段（§8.1 约束：不先做空壳 UI）。
+//! 只放当前真实支持的字段（Filee 行为 约束：不先做空壳 UI）。
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -130,7 +130,7 @@ pub enum ConflictPolicy {
     Skip,
 }
 
-/// 输出规则（§4.1）：位置、冲突、命名、体积筛选。
+/// 输出规则（Filee 行为）：位置、冲突、命名、体积筛选。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputRule {
     /// 输出目录；空串 = 与源文件同目录。
@@ -199,7 +199,7 @@ impl OutputRule {
     }
 }
 
-/// 一份完整配方。Job 启动时深拷贝，之后改配置不影响已排队的任务（§2.2）。
+/// 一份完整配方。Job 启动时深拷贝，之后改配置不影响已排队的任务（Filee 行为）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversionPreset {
     /// 稳定 ID（圆环动作保存的就是它）。

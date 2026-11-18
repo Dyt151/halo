@@ -10,13 +10,11 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invokeCommand } from "./ipc";
-import type { InputSourceHint } from "./types";
 
-export const MAIN_WINDOW_LABEL = "main";
 export const PANEL_WINDOW_LABEL = "panel";
 export const RING_WINDOW_LABEL = "ring";
 export const TRAY_PANEL_WINDOW_LABEL = "traypanel";
-export const INPUT_HUD_WINDOW_LABEL = "imehud";
+export const VOICE_CMD_WINDOW_LABEL = "cmdbar";
 
 /**
  * 主窗口的设置分区（评审任务 1–3：主窗口已精简为纯设置中心）。
@@ -58,18 +56,19 @@ export function isTrayPanelWindow(): boolean {
   return getCurrentWebviewWindow().label === TRAY_PANEL_WINDOW_LABEL;
 }
 
-/** 当前窗口是否为输入法切换提示。 */
-export function isInputHudWindow(): boolean {
-  return getCurrentWebviewWindow().label === INPUT_HUD_WINDOW_LABEL;
+/** 当前窗口是否为语音指令条。 */
+export function isVoiceCmdWindow(): boolean {
+  return getCurrentWebviewWindow().label === VOICE_CMD_WINDOW_LABEL;
 }
 
 /**
- * 订阅「输入法已切换」事件（Rust 收到系统的分布式通知后，先显示 HUD 再发）。
+ * 订阅「语音指令条已显示」事件（Rust 在 show + set_focus 之后发出）。
  *
- * HUD 窗口是 hide 而非销毁，React 只挂载一次，动画完全由这个事件驱动。
+ * 指令条窗口是 hide 而非销毁，React 只挂载一次：清空上一次的输入与结果、
+ * 把光标重新放进输入框，都必须由这个事件驱动，否则第二次唤起会带着上一条的话。
  */
-export async function onInputSourceChanged(handler: (hint: InputSourceHint) => void): Promise<() => void> {
-  return listen<InputSourceHint>("halo://input-source-changed", (e) => handler(e.payload));
+export async function onVoiceCmdShown(handler: () => void): Promise<() => void> {
+  return listen("halo://voice-cmd-shown", () => handler());
 }
 
 /**
@@ -138,43 +137,6 @@ export function takeSettingsTab(): string | null {
   const tab = pendingSettingsTab;
   pendingSettingsTab = null;
   return tab;
-}
-
-/* ------------------------------------------------------------------ */
-/* 跨分区跳转（同一窗口内）                                           */
-/* ------------------------------------------------------------------ */
-
-/**
- * 子组件请求主窗口切换分区的回调。
- *
- * 主窗口的分区切换状态（`MainWindow.tsx` 的 `useState`）在子组件树之外，
- * 而「权限与授权」收进「通用」后，环形转换 / 右键菜单等页面需要能跳回
- * 通用页去授权。事件广播要过 Rust 一圈，而这里是同窗口内的纯前端跳转，
- * 用一个模块级回调最直接：主窗口挂载时登记，子组件随时调用。
- */
-type SectionSwitcher = (page: MainPage) => void;
-
-let switchSection: SectionSwitcher | null = null;
-
-/**
- * 登记分区切换回调（由主窗口调用）。
- *
- * 返回注销函数：主窗口卸载时必须注销，否则旧回调会一直持有已销毁组件的状态。
- */
-export function onSectionSwitcher(fn: SectionSwitcher): () => void {
-  switchSection = fn;
-  return () => {
-    if (switchSection === fn) switchSection = null;
-  };
-}
-
-/**
- * 跳到指定分区（子组件调用）。
- *
- * 主窗口尚未挂载时静默失败——那时没有可跳转的目标，静默比抛错好。
- */
-export function goToSection(page: MainPage): void {
-  switchSection?.(page);
 }
 
 /**

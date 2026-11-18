@@ -23,7 +23,7 @@ const ACCOUNT_PASSPHRASE: &str = "sync-passphrase";
 
 /// 写入（覆盖）一条通用密码。
 ///
-/// 代价说明（已知问题，见 docs/IMPLEMENTATION.md §6）：`security -w <value>` 会把
+/// 代价说明（已知问题）：`security -w <value>` 会把
 /// 密码放进 argv，同一用户下的其它进程在此刻 `ps` 得到。要彻底消除得直接调
 /// Security.framework（SecItemAdd），但那会带上钥匙串 ACL 归属问题：存量条目
 /// 是由 `security` CLI 创建的，换实现可能让用户重新授权/读不到旧密码。
@@ -146,14 +146,4 @@ pub fn hydrate_sync(sync: &mut SyncConfig) {
             sync.passphrase = pp;
         }
     }
-}
-
-/// 抹掉配置里的明文密码，返回被抹掉前的值（用于落库到钥匙串）。
-pub fn take_password(sync: &mut SyncConfig) -> String {
-    std::mem::take(&mut sync.credentials.password)
-}
-
-/// 抹掉配置里的加密口令，返回被抹掉前的值。
-pub fn take_passphrase(sync: &mut SyncConfig) -> String {
-    std::mem::take(&mut sync.passphrase)
 }

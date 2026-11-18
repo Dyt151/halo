@@ -15,6 +15,8 @@ use serde::Serialize;
 mod bridge;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod notify_native;
 
 /// 新建文件的基名（与 macOS Finder 的「未命名」习惯一致）。
 const UNTITLED_BASE: &str = "未命名";
@@ -29,7 +31,7 @@ pub const EXTENSION_BUNDLE_ID: &str = "com.halo.desktop.FinderExtension";
 /// Word / Excel / PowerPoint 不在这里：装了 WPS 的机器上原生「使用 WPS 新建」
 /// 已经覆盖这三种文件，再放一份只会让菜单变长。
 ///
-/// 环形转换**不**在这里：运行态只保留 Option＋左键拖动一个入口（总规范 §8.2）。
+/// 环形转换**不**在这里：运行态只保留 Option＋左键拖动一个入口（Filee 行为）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceAction {
     /// 新建空文本文件（TextEdit 打开）。
@@ -101,6 +103,7 @@ pub struct FinderIntegrationStatus {
 }
 
 impl FinderIntegrationStatus {
+    #[cfg(any(not(target_os = "macos"), test))]
     fn unsupported() -> Self {
         Self {
             supported: false,
@@ -229,26 +232,37 @@ pub fn terminal_cd_script(directory: &Path) -> String {
     )
 }
 
-/// 系统通知（跨平台入口）：macOS 用 `osascript display notification`，其余平台仅记日志。
+/// 系统通知（跨平台入口）：macOS 优先走原生通知中心，失败才回退 AppleScript；
+/// 其余平台仅记日志。
 pub fn notify(title: &str, message: &str) {
     #[cfg(target_os = "macos")]
     {
-        let script = format!(
-            "display notification {} with title {}",
-            applescript_string_literal(message),
-            applescript_string_literal(title)
-        );
-        if let Err(err) = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .status()
-        {
-            tracing::debug!("发送系统通知失败: {err}");
+        if notify_native::post(title, message) {
+            return;
         }
+        osascript_notify(title, message);
     }
     #[cfg(not(target_os = "macos"))]
     {
         tracing::info!("通知：{title} - {message}");
+    }
+}
+
+/// 原生通知不可用时的兜底（无 bundle 的裸二进制、授权被拒等）。
+#[cfg(target_os = "macos")]
+fn osascript_notify(title: &str, message: &str) {
+    tracing::debug!("falling back to osascript notification");
+    let script = format!(
+        "display notification {} with title {}",
+        applescript_string_literal(message),
+        applescript_string_literal(title)
+    );
+    if let Err(err) = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .status()
+    {
+        tracing::debug!("发送系统通知失败: {err}");
     }
 }
 

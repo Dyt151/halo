@@ -17,26 +17,24 @@ import { api } from "../lib/ipc";
 import { toast, toastError } from "../lib/toast";
 import { useClipStore } from "../store/useClipStore";
 import type { HotkeyConfig } from "../lib/types";
-import { Btn, CardGroup, Divider, Kbd, Notice, ToggleRow } from "./ui";
+import { Btn, CardGroup, Divider, Notice, ToggleRow } from "./ui";
 
 type Slot = keyof Hotkeys;
 
 /** 只取快捷键字段本身（避免把其它 Config 字段混进 patch）。 */
 type Hotkeys = HotkeyConfig;
 
-/** 行定义：槽位 → 文案与说明。顺序即界面顺序。 */
-const ROWS: { slot: Slot; label: string; hint: string }[] = [
-  {
-    slot: "toggle",
-    label: "唤起 / 收起面板",
-    hint: "全局生效。默认 ⌃⌥C：⌃C 是终端的中断信号，会抢走 Ctrl+C",
-  },
-  { slot: "stack_paste", label: "粘贴堆栈顶", hint: "不开面板时直接用堆栈里最新的一条" },
+/** 行定义：槽位与文案。顺序即界面顺序。 */
+const ROWS: { slot: Slot; label: string }[] = [
+  { slot: "toggle", label: "唤起 / 收起面板" },
+  { slot: "stack_paste", label: "粘贴堆栈顶" },
+  { slot: "voice_cmd", label: "语音指令条" },
 ];
 
 const DEFAULTS: HotkeyConfig = {
   toggle: "Control+Option+C",
   stack_paste: "Control+Shift+V",
+  voice_cmd: "Control+Option+K",
 };
 
 /** 录制中只按了修饰键时的回显。 */
@@ -288,7 +286,7 @@ export default function HotkeySettings() {
     <div className="space-y-[16px]">
       <CardGroup
         title="全局快捷键"
-        subtitle="在任何 App 里都能用。点击右侧胶囊后直接按下新组合，Esc 取消，Backspace 恢复该项默认。"
+        subtitle="点击组合键后直接按下新组合，Esc 取消。"
       >
         <div className="space-y-[2px]">
           {ROWS.map((row, i) => {
@@ -306,7 +304,7 @@ export default function HotkeySettings() {
                         ? "请按下新的组合键…"
                         : state && !state.ok
                           ? state.message ?? "系统未接受这个组合"
-                          : row.hint}
+                          : null}
                     </div>
                   </div>
                   <button
@@ -345,31 +343,24 @@ export default function HotkeySettings() {
           </Btn>
           {busy && <span className="text-[11px] text-white/40">正在应用…</span>}
         </div>
+        <div className="mt-[8px] text-[11px]/[15px] text-white/40">
+          「语音指令条」弹出来时会自动把光标放进输入框——在无线麦 SayAll 里把某一格按键映射成上面这个组合（自定义快捷键），
+          按一下遥控器说出「打开抖音」就能真的打开它。
+        </div>
       </CardGroup>
 
-      <CardGroup
-        title="编号快捷键"
-        subtitle="面板唤出后按 ⌘1~9 直接回贴第 N 条（只在面板内生效，不占用其它 App 的快捷键）"
-      >
+      <CardGroup title="编号快捷键">
         <ToggleRow
           label="启用 ⌘1~9"
-          hint="面板内按 ⌘1~9 回贴对应序号；带筛选/搜索时序号不固定，自动停用"
           checked={numEnabled}
           onChange={(v) => void toggleNum(v)}
         />
         <Divider />
         <ToggleRow
           label="启用堆栈快捷键"
-          hint="关闭后「粘贴堆栈顶」的全局组合不再注册，堆栈本身仍可用"
           checked={stackEnabled}
           onChange={(v) => void toggleStack(v)}
         />
-        <div className="mt-[10px] flex flex-wrap items-center gap-[6px] text-[11px]/[15px] text-white/40">
-          <span className="shrink-0">状态</span>
-          <span className={numEnabled ? "text-white/55" : "text-white/35"}>
-            {numEnabled ? "面板内 ⌘1~9 已启用" : "已关闭"}
-          </span>
-        </div>
       </CardGroup>
 
       {failures.length > 0 && (
@@ -385,18 +376,6 @@ export default function HotkeySettings() {
           </div>
         </Notice>
       )}
-
-      <CardGroup>
-        <div className="flex flex-wrap items-center gap-[8px] text-[12px]/[18px] text-white/45">
-          <span className="shrink-0">提示</span>
-          <span>
-            ⌘Q、⌘Space、⌘⇧3/4/5、⌃C 等系统保留组合会被直接拒绝；
-            <span className="text-white/60">⌘W</span> 是本应用的关闭窗口，也不建议占用。
-          </span>
-          <Kbd>Esc</Kbd>
-          <span>取消录制</span>
-        </div>
-      </CardGroup>
     </div>
   );
 }

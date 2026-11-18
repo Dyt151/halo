@@ -88,6 +88,11 @@ impl MonitorState {
         // 先读取再提交计数，避免读失败导致漏抓。
         // 读失败（类型不支持/临时失败）也提交计数：否则同一 changeCount 会
         // 每轮都重读重失败，既空转又永远不前进。
+        // 机密/临时内容在读之前就跳过：不把密码等数据读进内存，也不入库。
+        if self.port.is_concealed() {
+            self.last_change_count.store(cc, Ordering::SeqCst);
+            return Ok(None);
+        }
         let content = match self.port.read() {
             Ok(c) => c,
             Err(_) => {
@@ -106,9 +111,15 @@ impl MonitorState {
             return Ok(None);
         }
         *last_hash = Some(hash);
+        let remote = self.port.is_remote_clipboard();
         Ok(Some(ClipEvent {
             content,
-            source_app: self.port.frontmost_app(),
+            source_app: if remote {
+                Some(types::REMOTE_CLIPBOARD_SOURCE.to_string())
+            } else {
+                self.port.frontmost_app()
+            },
+            remote,
         }))
     }
 }

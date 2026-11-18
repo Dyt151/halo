@@ -5,20 +5,22 @@
 #![allow(unused_imports)]
 
 pub mod appicon;
+pub mod appindex;
 pub mod clipboard;
 pub mod convert;
-pub mod desktop_menu;
 pub mod finder;
 pub mod history;
 pub mod hotkey;
 pub mod option_tap;
 pub mod paste;
 pub mod ring;
+pub mod sayall;
 pub mod sensitivity;
 pub mod services;
 pub mod sound;
 pub mod stack;
 pub mod statusbar;
+pub mod voicecmd;
 
 pub use clipboard::types::{ClipContent, ClipItem, ContentType, HistoryQuery, SyncState};
 pub use clipboard::ClipboardMonitor;

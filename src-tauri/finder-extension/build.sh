@@ -32,6 +32,16 @@ xcrun swiftc \
 cp "$HERE/Info.plist" "$OUT/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$OUT/Contents/Info.plist"
 
+# Finder 会按平台元数据匹配扩展；缺这些键时插件可能注册不上。
+SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+SDK_BUILD="$(xcrun --sdk macosx --show-sdk-build-version)"
+/usr/libexec/PlistBuddy \
+    -c "Set :DTPlatformVersion $SDK_VERSION" \
+    -c "Add :DTSDKName string macosx$SDK_VERSION" \
+    -c "Add :DTSDKBuild string $SDK_BUILD" \
+    -c "Add :BuildMachineOSBuild string $(sw_vers -buildVersion)" \
+    "$OUT/Contents/Info.plist"
+
 if [ "$IDENTITY" = "-" ]; then
     codesign --force --sign - --entitlements "$HERE/entitlements.plist" "$OUT"
 else

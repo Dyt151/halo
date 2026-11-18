@@ -3,7 +3,7 @@
 macOS 上的剪贴板工具。围绕剪贴板做四件事：
 
 1. **剪贴板**——自动记录你复制过的一切，用快捷键唤出面板，回车贴回去。
-2. **右键菜单**——在 Finder 和桌面空白处右键，直接新建文件、打开终端。
+2. **右键菜单**——在 Finder 里右键，直接新建文件、打开终端。
 3. **环形文件转换**——按住 Option 从文件上拖一下，松手在某个扇区就换格式。
 4. **状态栏控制中心**——驻留菜单栏，集中呈现电量、蓝牙、音量、输入法、网络等系统状态，并可一键「充到满」。
 
@@ -16,7 +16,7 @@ macOS 上的剪贴板工具。围绕剪贴板做四件事：
 | 功能 | 解决的问题 | 入口 | 关键实现 |
 | --- | --- | --- | --- |
 | 剪贴板 | 复制过的东西找不回来 | 全局快捷键唤出悬浮面板 | 轮询 `changeCount` + SQLite/FTS5 + `enigo` 注入 `⌘V` |
-| 右键菜单 | 右键菜单里没有「新建文件 / 在终端打开」 | Finder 右键、桌面空白右键 | Finder Sync 扩展 + 文件队列桥；桌面用 `CGEventTap` + `NSMenu` |
+| 右键菜单 | 右键菜单里没有「新建文件 / 在终端打开」 | Finder 右键 | Finder Sync 扩展 + 文件队列桥 |
 | 环形文件转换 | 只是想换个格式，却要开预览/在线转换 | 在 Finder 里按住 `Option`＋左键拖动文件 | 文件类型 Profile → 预设 → Dijkstra 路由 → 引擎 → 原子落盘 |
 | 状态栏控制中心 | 系统状态散落在各处菜单，缺乏一处总览 | 菜单栏图标常驻 | `core/statusbar/` 原生模块（电池 / SMC / 蓝牙 / 音量 / 输入法 / 网络）+ PowerUI 私有桥实现「充到满」 |
 
@@ -28,7 +28,7 @@ macOS 上的剪贴板工具。围绕剪贴板做四件事：
 
 1. **端到端加密（同步）已落地，本地敏感加密未落地**。多端同步（WebDAV）的 `chacha20poly1305` + `argon2` 端到端加密**已在 `sync/crypto.rs` 实现并接入同步链路**。但「本地把敏感内容加密入库」（`SensitivityPolicy::Encrypt`）**尚未实现**：选择该策略时会**降级为脱敏**（写成 `[敏感内容已脱敏 <hash 前 8 位>]`），不会按明文保存——但这不等于真加密。另请注意：应用**默认**敏感策略已从「明文标记」改为「脱敏入库」（设置中可改回）。
 
-2. **仅 macOS 可用**。核心能力——`changeCount` 轮询 + `enigo` 注入 `⌘V` 回贴、Finder Sync 扩展右键菜单、`CGEventTap` + `NSMenu` 桌面右键、`Option`＋拖动环形盘、`core/statusbar/` 原生模块——都依赖 macOS 私有 API。仓库里虽有 `linux/`、`windows/` 的目录骨架，但**并未实现、也未在非 macOS 上验证**。构建与运行的前提是 macOS + Xcode Command Line Tools。
+2. **仅 macOS 可用**。核心能力——`changeCount` 轮询 + `enigo` 注入 `⌘V` 回贴、Finder Sync 扩展右键菜单、`Option`＋拖动的 `CGEventTap` 手势、`core/statusbar/` 原生模块——都依赖 macOS 私有 API。仓库里虽有 `linux/`、`windows/` 的目录骨架，但**并未实现、也未在非 macOS 上验证**。构建与运行的前提是 macOS + Xcode Command Line Tools。
 
 3. **状态栏控制中心默认开启**。它读取系统电量、蓝牙、音量等状态信息；其中「充到满」依赖 PowerUI 私有框架桥，在系统升级或加固运行时环境下可能需要重新授权。若不需要，可在设置中关闭。
 
@@ -147,7 +147,7 @@ macOS 没有剪贴板变更通知 API，唯一可靠的路径是轮询 `NSPasteb
 
 ## 二、右键菜单
 
-右键菜单在三个地方出现，共用一套动作执行层。
+右键菜单在两个地方出现，共用一套动作执行层。
 
 ### 2.1 Finder 里的右键菜单（文件 / 文件夹）
 
@@ -165,22 +165,9 @@ Word / Excel / PowerPoint 不重复提供：装了 WPS 的机器上，原生菜�
 
 目标目录的判定：选中文件夹时以该文件夹为目标，选中文件时以它所在文件夹为目标。
 
-### 2.2 桌面空白处的右键菜单
+> 桌面空白处的右键保持系统原生，Halo 不接管。
 
-Finder Sync 扩展注入不了桌面，所以桌面由主程序接管，提供的是「Windows 式」右键菜单：
-
-| 菜单项 | 说明 |
-| --- | --- |
-| 新建文本 / Markdown | 在桌面创建对应文件并打开 |
-| 新建文件夹 | 自动避开重名，从「未命名文件夹」「未命名文件夹 2」…… |
-| 在终端中打开 | `cd` 到桌面 |
-| 粘贴项目 | 把 Finder 里复制的文件真正复制到桌面，重名自动加「副本」（再重名则「副本 2」），符号链接按链接保留 |
-| 更改桌面背景… | 打开系统「墙纸」设置（旧版 macOS 回退到「桌面与屏幕保护程序」） |
-| 显示 Finder 菜单 | 把这一次右键重新投递给 Finder，回到系统原生菜单 |
-
-只在**桌面空白处**接管；点在桌面图标上仍然是系统原生菜单。
-
-### 2.3 历史条目右键菜单（应用内）
+### 2.2 历史条目右键菜单（应用内）
 
 在剪贴板面板或历史页里右键任意一条记录：
 
@@ -192,14 +179,15 @@ Finder Sync 扩展注入不了桌面，所以桌面由主程序接管，提供�
 
 菜单是前端自绘的，会按屏幕边缘自动翻转位置；标签子菜单在贴近右缘时改为向左展开。
 
-### 2.4 实现方式
+### 2.3 实现方式
 
 **Finder 扩展只出菜单，不干活**
 
 Finder Sync 扩展是独立进程，不能直接调用 Rust。所以它做两件事：往右键菜单里放条目、把用户点的动作写成一个 JSON 请求文件。
 
 - 菜单只在「选中项目」和「容器（空白处）」两种上下文里出现。
-- 监视范围是真实主目录、桌面和外接卷（`/Volumes`）；系统目录（如 `/usr`）不会出现 Halo 菜单。
+- 监视范围是显式的几个实体目录：真实主目录、桌面、外接卷（`/Volumes`）、`/Users/Shared`、`/private/tmp`、`/private/var/tmp`、`/opt`。系统目录（如 `/usr`）不在名单里，不会出现 Halo 菜单。
+- `/Applications` 放进 `directoryURLs` 也不会生效——Finder 在那里从不调用扩展，这是系统限制，不是漏配。
 - 请求写成 `{action, paths, container, created_at}`，先写临时文件再 `rename`，保证主程序不会读到半个 JSON。
 - 队列目录三级回退：App Group 容器（`group.com.halo.desktop`）→ 扩展自己的容器 → `Application Support/HaloFinder/Requests`。写完再发 `halo-finder://wake` 尝试立即唤醒。
 
@@ -210,18 +198,7 @@ Finder Sync 扩展是独立进程，不能直接调用 Rust。所以它做两件
 - 坏 JSON 不改不删，改名成 `.json.bad` 保留现场，方便排查。
 - 只接受绝对路径，并且要求路径当前存在——扩展传来的东西一律当不可信输入。
 - 动作字符串与 Rust 侧 `ServiceAction::message()` 严格一一对应，两边改名就会失配。
-- 扩展的启用/停用通过 `pluginkit` 完成（macOS 15 起系统设置里已没有 Finder 扩展开关），设置页的开关同时联动桌面菜单的启停。
-
-**桌面：`CGEventTap` + 辅助功能 API + `NSMenu`**（`src-tauri/src/core/desktop_menu/macos.rs`）
-
-- 会话级事件监听只捕获右键按下 / 松开。命中时：
-  1. 用 `AXUIElementCopyElementAtPosition` 取鼠标下的元素，要求 `AXRole = AXGroup`、`AXSubrole = AXDesktop`，且所属进程的 bundle id 是 `com.apple.finder`——三者同时满足才算「桌面空白」。
-  2. 吞掉这次右键事件（返回 `NULL`，Finder 收不到）。
-  3. 回到主线程用 `NSMenu` 的 `popUpMenuPositioningItem` 弹出自己的菜单。
-- 菜单带 SF Symbol 图标，取不到图标时照常显示，只是没有图标。
-- 防自接管：所有事件都打了 `kCGEventSourceUserData = 42`，回调看到这个标记就直接放行；「显示 Finder 菜单」会用另一个魔数（`0x434C495042415345`，ASCII 的 `HALO`）重新投递一次右键，让 Finder 自己弹原生菜单。
-- 系统在回调超时或安全输入时会主动禁用 tap，回调收到伪事件类型后必须自己重新启用，否则会「用一阵子就失灵」。
-- 这里同样需要「辅助功能」权限；没授权时桌面右键保持原生行为，Finder 窗口内的右键不受影响。
+- 扩展的启用/停用通过 `pluginkit` 完成（macOS 15 起系统设置里已没有 Finder 扩展开关），设置页的开关直接联动扩展启停。
 
 **动作执行层**（`src-tauri/src/core/services/macos.rs`）
 
@@ -371,7 +348,6 @@ output      输出目录、重名策略（Rename / Overwrite / Skip）、
 | 能力 | 需要什么 | 没有时的表现 |
 | --- | --- | --- |
 | 回贴（自动 `⌘V`） | 系统设置 → 隐私与安全性 → 辅助功能 | 降级为「仅复制到剪贴板」，并提示原因 |
-| 桌面空白处右键菜单 | 同上 | 桌面保持系统原生右键 |
 | `Option`+拖动唤起环形盘 | 同上 | 圆环不会出现；设置页会显示是「没授权」「监听没起来」还是「起手点不是文件」 |
 | Finder 右键菜单 | 打包后的 `Halo.app` + Finder 扩展启用 | 设置页会说明是开发构建还是未启用 |
 | 环形盘交接通知 | 系统通知权限 | 只在盘内显示结果 |
@@ -394,11 +370,12 @@ logs/                 运行日志
 
 三个核心功能之外，还有几块支撑设施：
 
-- **模块框架**：`module.json` 清单 + 权限白名单 + sidecar / iframe 运行时 + 贡献点（剪贴板动作、快捷键、设置页、命令），`docs/module-spec.md` 是开发规范。
+- **模块框架**：`module.json` 清单 + 权限白名单 + sidecar / iframe 运行时 + 贡献点（剪贴板动作、快捷键、设置页、命令），`modules.example/filee/` 是最小示例模块。
 - **多端同步**：WebDAV provider，可选 `chacha20poly1305` + `argon2` 端到端加密，本地优先。
 - **设置中心**：通用、剪贴板、环形转换、右键菜单、同步、权限、关于；主窗口打开时停在上次的分区。
 - **高级历史管理**：从面板或「剪贴板」设置进入的二级页，做批量浏览、筛选、标签与容量清理。
 - **原生菜单栏**：`⌘,` 打开设置、`⌘Q` 退出；「窗口」菜单里能直接打开面板、历史、设置。关闭窗口只是隐藏，不会退出进程。
+- **状态栏「VPN」二级页**：识别本机在跑的 FlClash / Clash 核心——配置里的混合端口 + 回环 REST 控制口，读出接管状态、模式、策略组、节点与实时网速，可以在面板里切「规则 / 全局 / 直连」、选节点、批量测延迟。「流量接管」只改 macOS 系统代理那三项（`networksetup`，写完回读校验、不符立刻回滚），不碰订阅、不改 FlClash 的配置、菜单栏提示直接说「代理已接管」；判定只看系统代理实际指向的那个端口——核心退出、或核心换了端口而系统代理还指着旧端口，都改报「代理已失效（去面板关掉）」，面板保留关闭入口。FlClash 没开外部控制时只给接管开关和端口读数。
 
 ---
 
@@ -416,13 +393,13 @@ npm run tauri dev      # 开发模式
 npm run tauri build    # 打包 Halo.app
 ```
 
-Finder 右键菜单只能在**打包后的 App** 里验证（`tauri dev` 的裸二进制里没有扩展）。桌面右键由主程序实现，dev 下也能用，但同样需要「辅助功能」权限。
+Finder 右键菜单只能在**打包后的 App** 里验证（`tauri dev` 的裸二进制里没有扩展）。
 
 ## 目录结构
 
 ```
 src/                  前端（React + TS）
-  windows/            四个窗口：面板 / 设置中心 / 环形盘 / 快捷回复选择器
+  windows/            窗口组件：主窗口（设置中心）/ 面板 / 环形盘 / 状态栏面板 / 语音指令条
   components/         卡片、右键菜单、环形编辑器等
   pages/              历史、设置、模块、回复
 src-tauri/src/        Rust 后端
@@ -430,7 +407,6 @@ src-tauri/src/        Rust 后端
   core/history/       历史 CRUD、FTS5 查询、容量策略
   core/paste/         回贴与权限降级
   core/stack/         剪贴板堆栈
-  core/desktop_menu/  桌面右键（CGEventTap + NSMenu）
   core/services/      Finder 扩展请求桥 + 动作执行
   core/finder/        读 Finder 选中项 + 起手文件（AX 命中）
   core/ring/          环形盘状态机与转换编排
@@ -440,31 +416,35 @@ src-tauri/src/        Rust 后端
   commands/           Tauri 命令层（参数校验 + 中文错误）
   modules/ sync/      模块宿主、WebDAV 同步
 src-tauri/finder-extension/   Finder Sync 扩展（Swift，独立构建）
-native/               早期 AppKit 原型，不参与当前构建
+src-tauri/native/powerui/     「立即充满电」PowerUI 私有框架桥（C/ObjC，派生自 Status Trio）
 docs/                 设计文档与实现说明
 ```
 
 ## 文档
 
-> ⚠️ 下列设计文档目前**仅 `docs/UI-REVIEW-2026-10-29.md` 在库**（一次界面审查，覆盖面板 / 设置 / 历史 / 卡片，**非全产品验收**）。其余文档尚待补全；阅读时请以源码为准。
+- `docs/POSITIONING.md`：定位卡（目标用户 / 核心楔子 / 差异点 / 当前边界）。
+- `modules.example/filee/`：示例模块（`module.json` 清单 + sidecar 最小实现），模块框架的用法以它和源码为准。
 
-| 文档 | 说明 | 状态 |
-| --- | --- | --- |
-| `docs/UI-REVIEW-2026-10-29.md` | 界面审查（可用性 / 响应式 / 美观度 / 工程落地） | ✅ 在库 |
-| `docs/POSITIONING.md` | 定位卡（目标用户 / 核心楔子 / 差异点 / 当前边界） | ✅ 在库 |
-| `docs/IMPLEMENTATION.md` | 实际实现、与设计的差异、踩过的坑 | ⏳ 待补 |
-| `docs/ARCHITECTURE.md` | 系统架构与目录职责 | ⏳ 待补 |
-| `docs/PRD.md` | 产品定位与需求池 | ⏳ 待补 |
-| `docs/UI-DESIGN.md` | 苹果风格设计规范 | ⏳ 待补 |
-| `docs/module-spec.md` | 模块开发规范 | ⏳ 待补 |
-| `docs/REA-Filee-Conversion.md` | 格式转换规范（转换实现的依据） | ⏳ 待补 |
-| `docs/REA-Filee-Ring-Integrated.md` | 环形转换总规范（Profile / 单手势 / 单面 / 禁用规则） | ⏳ 待补 |
-| `docs/REA-Filee-Ring-Wheel.md` | 环形盘交互逆向记录（早期版本，已合并进总规范） | ⏳ 待补 |
-| `docs/REA-Filee-Ring-Editor.md` | 环形编辑页逆向记录（早期版本，已合并进总规范） | ⏳ 待补 |
-| `docs/REA-iCopy-Filee.md` | iCopy / Filee 逆向分析 | ⏳ 待补 |
+其余设计文档以本 README 与源码为准。
+
+## 引用与致谢
+
+Halo 在开发中参考了下列外部软件，凡是引用/衍生之处都已在代码与文档中标注。分发本仓库或其构建产物时，请一并保留「标注位置」列出的文件。
+
+| 来源 | 许可 | Halo 用了什么 | 标注位置 |
+| --- | --- | --- | --- |
+| [Status Trio](https://github.com/lingyired/status-trio)（lingyired） | Apache-2.0 | 状态栏面板设计、菜单栏图标的几何 / 配色 / 字体常量、PowerUI「立即充满电」桥（`src-tauri/native/powerui/PowerUIPrivateAPI.{h,m}` 为原样拷贝 + 一处修改）、Wi-Fi 二级页分类与文案（按其 Swift 源码逐条移植） | `LICENSE-STATUS-TRIO.txt` + `NOTICE-STATUS-TRIO.txt`（含逐项改动清单） |
+| [Filee](https://github.com/KnifeLemon/Filee)（KnifeLemon） | MIT | `src/lib/ringGeometry.ts` 的圆环几何 / 命中判定移植自其 `DonutGeometry`；环形转换与格式转换的建模（Preset → Profile → 路由 → 引擎）以其为参照 | `LICENSE-FILEE.txt`、`ringGeometry.ts` 文件头、README 第三节 |
+| iCopy（cn.better365，闭源商业应用） | 专有 | 剪贴板交互对标其习惯（粘贴前修剪、删除确认、容量上限、文件条目语义）；`scripts/import_icopy.py` 为迁移兼容解析其数据布局。**未使用其任何代码。** | 本节；相关行为在源码注释中标注「对标 iCopy」 |
+| FlClash / Clash | 开源（各自仓库） | VPN 二级页仅通过其公开文档描述的 REST 控制口集成，不含其代码、不修改其配置 | README 第五节 |
+| Apple SF Symbols / PowerUI | Apple 条款 / 私有 API | 菜单栏图标含按 SF Symbols 形态自绘的矢量路径（版权归 Apple，仅限 Apple 平台产品内使用）；「立即充满电」调用 Apple 私有框架 PowerUI，系统升级后可能失效 | `NOTICE-STATUS-TRIO.txt`、README 已知限制 |
+
+其余第三方组件均为按各自许可证正常使用的 npm / Cargo 依赖，清单见 `package.json` 与 `src-tauri/Cargo.toml`。
 
 ## 许可证
 
 主许可证为 MIT（见 `LICENSE`）。
 
 状态栏面板设计、菜单栏图标的几何 / 配色 / 字体常量，以及 `core/statusbar/macos/powerui.rs` 的 PowerUI 私有框架桥，派生自 lingyired 的 **Status Trio**（Apache-2.0，见 `LICENSE-STATUS-TRIO.txt` 与 `NOTICE-STATUS-TRIO.txt`）。按 Apache-2.0 要求，分发时须一并保留这两份文件。
+
+`src/lib/ringGeometry.ts` 移植自 KnifeLemon 的 **Filee**（MIT，见 `LICENSE-FILEE.txt`）。按 MIT 要求，分发时须保留该文件头部的版权声明与这份许可证文本。

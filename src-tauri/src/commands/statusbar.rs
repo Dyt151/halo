@@ -60,6 +60,7 @@ pub async fn statusbar_glyph_preview(app: AppHandle) -> statusbar::tray::Preview
 #[tauri::command]
 pub fn statusbar_set_volume(scope: String, volume: f64) -> CommandResult<()> {
     let scope = parse_scope(&scope)?;
+    statusbar::note_self_volume_write(scope, volume);
     after_change(statusbar::set_volume(scope, volume).map_err(system_error))
 }
 
@@ -78,6 +79,15 @@ pub fn statusbar_set_default_device(scope: String, device_id: u32) -> CommandRes
 #[tauri::command]
 pub fn statusbar_select_input_source(id: String) -> CommandResult<()> {
     statusbar::select_input_source(&id).map_err(system_error)
+}
+
+/// 打开输入法自带的设置 App（微信输入法 → `WeTypeSettings.app`）。
+/// 路径由快照里的 `settings_app` 给出，不接受前端拼出来的路径。
+///
+/// 只是起一个进程，不碰 TIS/TSM，所以放到主线程外等它退出，面板不会卡顿。
+#[tauri::command]
+pub async fn statusbar_open_ime_settings(path: String) -> CommandResult<()> {
+    statusbar::open_ime_settings(&path).map_err(system_error)
 }
 
 /// Wi-Fi 开关。
@@ -145,6 +155,114 @@ pub async fn statusbar_wifi_page() -> statusbar::WifiScan {
     tauri::async_runtime::spawn_blocking(statusbar::wifi_scan)
         .await
         .unwrap_or_else(|_| statusbar::WifiScan::unavailable())
+}
+
+/// VPN / 代理二级页读数：读 FlClash 配置、探测控制口、回读系统代理三项。
+///
+/// 全是子进程和 TCP 握手，几十到几百毫秒，只能在 worker 线程跑；和 Wi-Fi 扫描
+/// 一样「打开页面读一次、点刷新再读一次」，不进两秒一轮的网速轮询。
+#[tauri::command]
+pub async fn statusbar_proxy_page() -> statusbar::ProxyPage {
+    let page = tauri::async_runtime::spawn_blocking(statusbar::proxy_page)
+        .await
+        .unwrap_or_else(|_| statusbar::ProxyPage::unavailable());
+    // 一行读数日志：远程走查不用截图也能确认页面拿到的是哪一档降级。
+    tracing::info!(
+        source = page.source.as_str(),
+        core_running = page.core_running,
+        takeover = page.takeover,
+        takeover_alive = page.takeover_alive,
+        groups = page.groups.len(),
+        "代理页读数"
+    );
+    page
+}
+
+/// 代理页可见时的网速轮询：一次控制口请求，或一次 `netstat` 计数差分。
+#[tauri::command]
+pub async fn statusbar_proxy_speed() -> statusbar::ProxySpeed {
+    tauri::async_runtime::spawn_blocking(statusbar::proxy_speed)
+        .await
+        .unwrap_or_else(|_| statusbar::ProxySpeed::unavailable())
+}
+
+/// 流量接管开关：改的是 macOS 系统代理三项，不是路由也不是 DNS。
+///
+/// 返回 `ProxyOutcome` 而不是 `CommandResult`：失败原因（端口没人监听、回读不
+/// 一致已回滚）要显示在页面上，而不是弹一个通用错误。
+#[tauri::command]
+pub async fn statusbar_proxy_set_takeover(enabled: bool) -> statusbar::ProxyOutcome {
+    let outcome = tauri::async_runtime::spawn_blocking(move || statusbar::proxy_set_takeover(enabled))
+        .await
+        .unwrap_or_else(|_| statusbar::ProxyOutcome::failed("读数线程没能完成这次操作"));
+    statusbar::tray::request_refresh();
+    outcome
+}
+
+/// 模式三档：`rule` / `global` / `direct`，走 Clash REST 的 `PATCH /configs`。
+#[tauri::command]
+pub async fn statusbar_proxy_set_mode(mode: String) -> statusbar::ProxyOutcome {
+    tauri::async_runtime::spawn_blocking(move || statusbar::proxy_set_mode(&mode))
+        .await
+        .unwrap_or_else(|_| statusbar::ProxyOutcome::failed("读数线程没能完成这次操作"))
+}
+
+/// 选择一个组里的具体节点（`PUT /proxies/<组>`）。
+#[tauri::command]
+pub async fn statusbar_proxy_select_node(group: String, node: String) -> statusbar::ProxyOutcome {
+    tauri::async_runtime::spawn_blocking(move || statusbar::proxy_select_node(&group, &node))
+        .await
+        .unwrap_or_else(|_| statusbar::ProxyOutcome::failed("读数线程没能完成这次操作"))
+}
+
+/// 测一个组里全部节点的延迟：分批并发，最坏十几秒，前端在此期间显示转圈。
+#[tauri::command]
+pub async fn statusbar_proxy_latency(group: String) -> Vec<statusbar::ProxyNode> {
+    tauri::async_runtime::spawn_blocking(move || statusbar::proxy_latency(&group))
+        .await
+        .unwrap_or_default()
+}
+
+/// 把 FlClash 带到前台（核心没启动、或要改订阅时由用户自己操作）。
+#[tauri::command]
+pub async fn statusbar_proxy_open_app() -> statusbar::ProxyOutcome {
+    tauri::async_runtime::spawn_blocking(statusbar::proxy_open_app)
+        .await
+        .unwrap_or_else(|_| statusbar::ProxyOutcome::failed("没能打开 FlClash"))
+}
+
+/// 自动换节点卡片读数：配置 + 后端 + 当前节点 + 最近测速/切换 + 日志。
+#[tauri::command]
+pub async fn statusbar_autoswitch_state() -> statusbar::AutoSwitchState {
+    tauri::async_runtime::spawn_blocking(statusbar::autoswitch_state)
+        .await
+        .unwrap_or_else(|_| statusbar::AutoSwitchState::unavailable())
+}
+
+/// 保存自动换节点配置（开关、阈值、巡检间隔、每日上限、组名）。
+#[tauri::command]
+pub async fn statusbar_autoswitch_set_config(
+    config: statusbar::AutoSwitchConfig,
+) -> statusbar::ProxyOutcome {
+    tauri::async_runtime::spawn_blocking(move || statusbar::autoswitch_set_config(config))
+        .await
+        .unwrap_or_else(|_| statusbar::ProxyOutcome::failed("保存线程没能完成这次操作"))
+}
+
+/// 路由器 OpenClash 的 API 密钥存进钥匙串（不落明文配置）。
+#[tauri::command]
+pub async fn statusbar_autoswitch_set_router_secret(secret: String) -> statusbar::ProxyOutcome {
+    tauri::async_runtime::spawn_blocking(move || statusbar::autoswitch_set_router_secret(secret))
+        .await
+        .unwrap_or_else(|_| statusbar::ProxyOutcome::failed("保存线程没能完成这次操作"))
+}
+
+/// 立即跑一轮巡检测速（不等 30 秒周期），返回最新读数。
+#[tauri::command]
+pub async fn statusbar_autoswitch_check_now() -> statusbar::AutoSwitchState {
+    tauri::async_runtime::spawn_blocking(statusbar::autoswitch_check_now)
+        .await
+        .unwrap_or_else(|_| statusbar::AutoSwitchState::unavailable())
 }
 
 /// 「立即充满电」读数：PowerUI 私有框架，几毫秒，面板可见时轮询。

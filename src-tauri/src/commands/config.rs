@@ -22,6 +22,14 @@ pub fn patch_config(state: State<'_, AppState>, patch: serde_json::Value) -> Com
     crate::window::apply_tray_visibility(&state.app, saved.statusbar.enabled);
     // 图标的三区内容（中心图形 / 电量环 / 音量点）也可能刚被改掉。
     crate::core::statusbar::tray::request_refresh();
+    // 刚勾上 VPN 模块：接管状态的观察线程立即起来（重复调用只起一条），
+    // 否则这次会话里核心退出就没人把图标改成「失效」。关掉模块不用停线程——
+    // 它只在「已接管/已失效」时才动，其余时间只是睡着。
+    if saved.statusbar.sections.iter().any(|id| id == "vpn") {
+        crate::core::statusbar::start_proxy_watcher();
+    }
+    // 主题变化立即同步窗口外观，否则原生毛玻璃要等重启才跟上。
+    crate::window::sync_theme(&state.app, &saved.theme);
     let _ = state.app.emit(crate::events::CONFIG_CHANGED, &saved);
     Ok(saved)
 }
@@ -34,6 +42,20 @@ pub fn patch_config(state: State<'_, AppState>, patch: serde_json::Value) -> Com
 pub fn apply_hotkeys(state: State<'_, AppState>) -> Vec<crate::core::hotkey::HotkeySlotResult> {
     state.hotkey.apply_with_report(&state.config.get())
 }
+
+/// 设置页里的别名 → 系统设置真实锚点。
+///
+/// 前端只写语义名，锚点收在这张表里：`open` 对认不出的 anchor 一样返回成功，
+/// 所以拼错的后果是「点了没反应」而不是报错——把 URL 集中一处才改得动。
+/// 表里没有的入参仍按完整锚点透传，兼容已有的调用。
+#[cfg(target_os = "macos")]
+const SETTINGS_ANCHORS: &[(&str, &str)] = &[
+    ("accessibility", "com.apple.Accessibility-Settings.extension"),
+    (
+        "login-items",
+        "com.apple.General-Settings.extension?LoginItems",
+    ),
+];
 
 /// 打开系统设置指定面板（设置页「服务」「辅助功能」等直达入口）。
 #[tauri::command]
@@ -53,10 +75,14 @@ pub fn open_system_settings(pane: String) -> CommandResult<()> {
                 pane.to_string(),
             ));
         }
-        let url = if pane.starts_with("x-apple.systempreferences:") {
-            pane.to_string()
-        } else {
-            format!("x-apple.systempreferences:{pane}")
+        let anchor = SETTINGS_ANCHORS
+            .iter()
+            .find(|(key, _)| *key == pane)
+            .map(|(_, anchor)| *anchor);
+        let url = match anchor {
+            Some(a) => format!("x-apple.systempreferences:{a}"),
+            None if pane.starts_with("x-apple.systempreferences:") => pane.to_string(),
+            None => format!("x-apple.systempreferences:{pane}"),
         };
         std::process::Command::new("open")
             .arg(&url)

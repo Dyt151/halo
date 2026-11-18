@@ -1,10 +1,10 @@
-//! 转换引擎与「边」的契约（docs/REA-Filee-Conversion.md §2.3 / §8.3）。
+//! 转换引擎与「边」的契约（README「三、环形文件转换」）。
 //!
 //! 引擎只回答两件事：我能直接完成哪些边、给我一步怎么执行。
 //! 「从 A 到 B 怎么走」由 `router.rs` 用所有引擎声明的边一起规划；
 //! 「写到哪个路径、重名怎么办」由 `output.rs` 的分配器负责。
 //!
-//! 引擎的三条硬约束（§8.3 末尾）：
+//! 引擎的三条硬约束（Filee 行为 末尾）：
 //! 1. 不能读取用户配置（只拿 `ConversionStep` 里的 preset 快照）；
 //! 2. 不能自行决定冲突策略；
 //! 3. 绝不修改输入文件。
@@ -115,7 +115,7 @@ impl ConversionEdge {
     }
 }
 
-/// 引擎可用性。单个引擎不可用只让它自己的边消失，不影响整张图（§2.4）。
+/// 引擎可用性。单个引擎不可用只让它自己的边消失，不影响整张图（Filee 行为）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineStatus {
     Available,
@@ -211,7 +211,7 @@ pub trait ConverterEngine: Send + Sync {
     /// 本引擎能直接完成的边（`Normal` 模式）。
     fn edges(&self) -> Vec<ConversionEdge>;
 
-    /// 本引擎允许的并发数（§3.4 的引擎层限流）。
+    /// 本引擎允许的并发数（Filee 行为 的引擎层限流）。
     fn max_parallelism(&self) -> usize;
 
     /// 引擎是否可用。未安装外部引擎时应返回 `Missing(原因)`。

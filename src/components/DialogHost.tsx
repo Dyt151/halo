@@ -33,13 +33,9 @@ export default function DialogHost() {
         e.preventDefault();
         e.stopPropagation();
         closeDialog(null);
-        return;
       }
-      if (e.key === "Enter" && dialog.kind !== "prompt") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeDialog(true);
-      }
+      // Enter 不再统一确认：确认框默认焦点在「取消」，Enter 应激活当前聚焦的
+      // 按钮。否则用户回车本想取消，实际执行了删除这类不可逆操作。
     };
     // capture 阶段拦截：避免底下的面板/列表也收到 Esc / Enter（评审 S3 同类问题）。
     window.addEventListener("keydown", onKey, true);

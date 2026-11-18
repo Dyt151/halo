@@ -129,12 +129,6 @@ impl PasteService {
         self.trigger_or_copied_only()
     }
 
-    /// 将任意内容写入剪贴板并模拟 `Cmd+V`（快捷回复等非历史内容复用）。
-    pub fn paste_content(&self, content: &ClipContent) -> CommandResult<PasteOutcome> {
-        self.write_port(content)?;
-        self.trigger_or_copied_only()
-    }
-
     /// 触发粘贴快捷键（供快捷键「快速回贴」复用）。
     pub fn trigger_paste(&self) -> CommandResult<()> {
         trigger_paste().map_err(|e| AppError::with_details(1003, "无法模拟粘贴，请检查辅助功能权限", e.to_string()))

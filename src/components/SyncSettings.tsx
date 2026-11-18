@@ -203,7 +203,7 @@ export default function SyncSettings() {
 
   return (
     <div className="space-y-[16px]">
-      <CardGroup title="多端同步" subtitle="默认关闭，数据本地优先">
+      <CardGroup title="多端同步">
         <ToggleRow
           label="启用同步"
           checked={form.enabled}
@@ -212,24 +212,13 @@ export default function SyncSettings() {
         <Divider />
         <ToggleRow
           label="端到端加密"
-          hint="云端只存密文"
           checked={form.encryption}
           onChange={(v) => update({ encryption: v })}
         />
         <Divider />
-        {/* 说清楚「同步什么、不同步什么」：否则用户会以为丢数据。 */}
-        <div className="space-y-[4px] text-[12px]/[18px] text-white/45">
-          <div>
-            同步的是 <span className="text-white/70">文本 / 富文本 / 文件路径</span>{" "}
-            这三类条目；删除也会同步传播（靠墓碑记录）。
-          </div>
-          <div>
-            不传的有两类：<span className="text-white/70">敏感内容</span>
-            （密码、验证码等，识别后一律不上云）、
-            <span className="text-white/70">图片二进制</span>
-            （只有两台机器各自有同一张图时，那条记录才会落地）。
-          </div>
-        </div>
+        <p className="py-[4px] text-[12px]/[18px] text-white/45">
+          只同步文本与文件路径；敏感内容和图片不上云。
+        </p>
       </CardGroup>
 
       <CardGroup title="WebDAV">
@@ -329,9 +318,6 @@ export default function SyncSettings() {
               {errors.passphrase && (
                 <p className="mt-[4px] text-[12px] text-danger">{errors.passphrase}</p>
               )}
-              <p className="mt-[4px] text-[12px]/[16px] text-white/45">
-                口令丢失将无法解密云端数据，请自行备份；更改口令后需重新同步一次。
-              </p>
               {hasPassphrase && (
                 <button
                   type="button"

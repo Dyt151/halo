@@ -1,4 +1,4 @@
-//! 文件格式转换命令：预设 → Job（docs/REA-Filee-Conversion.md §8）。
+//! 文件格式转换命令：预设 → Job（README「三、环形文件转换」）。
 //!
 //! 命令层只做三件事：取预设快照、跑 Job、把逐文件进度转成事件。真正的格式
 //! 探测、路由规划、输出分配与回收全在 `crate::core::convert`（纯函数 + 单测）。
@@ -76,7 +76,7 @@ pub async fn convert_run(
 /// 取消正在运行的转换（返回是否有任务真的被取消）。
 ///
 /// 取消不是「假装没发生」：已完成文件保留，正在写的临时文件被丢弃，
-/// 该文件拥有的未完成输出一并清理（§3）。
+/// 该文件拥有的未完成输出一并清理（Filee 行为）。
 #[tauri::command]
 pub fn convert_cancel() -> bool {
     job::cancel_active()

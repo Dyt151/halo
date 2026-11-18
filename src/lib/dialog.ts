@@ -59,11 +59,6 @@ export function getDialog(): DialogRequest | null {
   return current;
 }
 
-/** 仍在排队的对话框数量（测试/调试用）。 */
-export function getDialogQueueLength(): number {
-  return queue.length + (current ? 1 : 0);
-}
-
 /** 关闭当前对话框并回传结果；队列里还有则立刻展示下一个。 */
 export function closeDialog(result: boolean | string | null) {
   const req = current;

@@ -1,5 +1,5 @@
 /**
- * 设置 → 环形转换（总规范：docs/REA-Filee-Ring-Integrated.md §1.3）。
+ * 设置 → 环形转换（总规范：README「三、环形文件转换」）。
  *
  * 信息架构分四层，对应三层数据模型：
  * 1. 手势与权限 —— 只有 Option＋拖动一个入口；
@@ -9,7 +9,7 @@
  * 4. 可用预设 / 预设编辑器 —— 一条预设就是一份完整配方。
  *
  * 运行态（拖动手势、真实转换、进度与结果）不在这里，见 `core/ring` 与
- * `windows/RingWindow.tsx`。设置页自己仍可用鼠标与键盘编辑（§0 的说明），
+ * `windows/RingWindow.tsx`。设置页自己仍可用鼠标与键盘编辑（Filee 行为 的说明），
  * 只是不再宣传运行态不存在的入口。
  *
  * 拖动会话统一由本组件协调：圆环视图只上报「指针落在哪个 slot」，
@@ -17,10 +17,21 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import RingEditor, { RING_EDITOR_CENTER, ringPointOf } from "../components/RingEditor";
-import { Btn, CardGroup, Divider, Input, Row, SearchField, Segment, SliderRow, ToggleRow } from "../components/ui";
-import { api } from "../lib/ipc";
+import { ProfileDialog } from "./ring/ProfileDialog";
+import { PresetDialog } from "./ring/PresetDialog";
+import { usePrefersReducedMotion } from "../lib/usePrefersReducedMotion";
+import {
+  DEFAULT_SLICES,
+  IMAGE_EXTS,
+  clean,
+  presetCaption,
+  presetCategory,
+  shadowedBy,
+  uniqueProfileId,
+} from "./ring/model";
+import type { Filter } from "./ring/model";
+import { Btn, CardGroup, Row, SearchField, Segment, ToggleRow } from "../components/ui";
 import { toast } from "../lib/toast";
-import { goToSection } from "../lib/windows";
 import {
   DRAG_THRESHOLD,
   MAX_SLICES,
@@ -29,173 +40,9 @@ import {
   withMove,
   withRemove,
 } from "../lib/ringGeometry";
-import type { ConversionPreset, ConvertFormat, GestureStatus, RingConfig, RingProfile } from "../lib/types";
+import type { ConversionPreset, RingConfig, RingProfile } from "../lib/types";
 import { useClipStore } from "../store/useClipStore";
 
-type Category = "image" | "doc" | "tool";
-type Filter = "all" | Category;
-
-/** 图片格式（候选面板的「图片 / 文档」分类用）。 */
-const IMAGE_TARGETS: ConvertFormat[] = [
-  "png",
-  "jpg",
-  "webp",
-  "gif",
-  "bmp",
-  "tiff",
-  "heic",
-];
-
-/**
- * 扩展名别名的**前端镜像**（与 Rust `ConvertFormat::from_ext` 同一张表）。
- *
- * 两边各写一份是不可避免的（前端不能调 Rust 纯函数），所以这里用「同一个
- * 校验口径」而不是「同一个字符串列表」：复合扩展名（`tar.gz`）只有在表里
- * 出现过才被接受，否则用户会存下一个永远匹配不到的字符串。
- */
-const KNOWN_EXTENSIONS = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "jpe",
-  "webp",
-  "gif",
-  "bmp",
-  "tif",
-  "tiff",
-  "heic",
-  "heif",
-  "hif",
-  "html",
-  "htm",
-  "xhtml",
-  "txt",
-  "text",
-  "pdf",
-  "docx",
-  "docm",
-  "dotx",
-]);
-/** 单个扩展名最长多少字符（Rust `MAX_EXTENSION_LEN`）。 */
-const MAX_EXTENSION_LEN = 16;
-/** 扩展名快速填充：图片族 / 文本族 / 文档族。 */
-const IMAGE_EXTS = [
-  "png",
-  "jpg",
-  "jpeg",
-  "jpe",
-  "webp",
-  "gif",
-  "bmp",
-  "tif",
-  "tiff",
-  "heic",
-  "heif",
-  "hif",
-];
-const TEXT_EXTS = ["html", "htm", "xhtml", "txt", "text"];
-const DOC_EXTS = ["pdf", "docx", "docm", "dotx"];
-
-/**
- * 内置 Profile 的「恢复默认」顺序（与 Rust `preset::DEFAULT_*` / `stock()` 对齐）。
- *
- * 每张盘只有一面；打包 / 解压 / PDF 分页由「工具动作」开关统一追加。
- */
-const DEFAULT_SLICES: Record<string, string[]> = {
-  images: ["img.jpg", "img.png", "img.webp", "img.gif", "img.heic", "img.pdf"],
-  text: ["doc.html", "doc.txt"],
-  docs: ["img.png", "img.jpg", "doc.txt", "doc.html", "doc.docx", "doc.pdf"],
-  mixed: [
-    "img.jpg",
-    "img.png",
-    "img.webp",
-    "img.gif",
-    "img.bmp",
-    "img.tiff",
-    "doc.html",
-    "doc.txt",
-  ],
-};
-
-const ARCHIVE_LABELS: Record<string, string> = { zip: "ZIP", tar_gz: "TAR.GZ", tar: "TAR" };
-
-/** 工具动作的短说明（打包 / 解压 / PDF 分页）。 */
-function kindCaption(preset: ConversionPreset): string | null {
-  const kind = preset.kind ?? "convert";
-  if (kind === "convert") return null;
-  if (kind === "extract") return "解压成文件夹";
-  if (kind === "pdf_to_cbz") return "PDF → CBZ 漫画包";
-  if ("pack" in kind) return `整批 → 一个 ${ARCHIVE_LABELS[kind.pack.archive] ?? kind.pack.archive}`;
-  if ("pdf_pages" in kind) return `每页一张 ${kind.pdf_pages.to.toUpperCase()}`;
-  return "工具动作";
-}
-
-/** 预设副标题：目标 + 关键参数，让同目标不同质量的预设能一眼分开。 */
-function presetCaption(preset: ConversionPreset): string {
-  const kind = kindCaption(preset);
-  if (kind) return kind;
-  if (preset.target === "*") return "同格式重编码";
-  const label = preset.target.toUpperCase();
-  if (preset.target === "jpg") return `${label} ${preset.image.jpeg_quality}% · 背景 ${preset.image.alpha_background}`;
-  if (preset.target === "pdf") return `转成 PDF${preset.output.dir ? " · 自定义目录" : ""}`;
-  return preset.output.dir ? `${label} · 自定义目录` : label;
-}
-
-function presetCategory(preset: ConversionPreset): Category {
-  if ((preset.kind ?? "convert") !== "convert") return "tool";
-  if (preset.target === "*") return "image";
-  return IMAGE_TARGETS.includes(preset.target) ? "image" : "doc";
-}
-
-/**
- * 扩展名规范化（前端镜像 Rust `core::ring::profile::normalize_extension`）。
- *
- * 返回 `null` 表示这个 token 会被后端丢掉，界面上要立刻提示，而不是等
- * 保存后发现「我写的扩展名怎么没了」。
- */
-function normalizeExtension(raw: string): string | null {
-  const trimmed = raw.trim().toLowerCase();
-  if (trimmed.includes("..")) return null;
-  let text = trimmed.replace(/^\*+\s*/, "");
-  text = text.replace(/^\.+/, "").replace(/\.+$/, "");
-  if (!text || text.length > MAX_EXTENSION_LEN) return null;
-  if (!/^[a-z0-9._-]+$/.test(text)) return null;
-  if (text.includes(".") && !KNOWN_EXTENSIONS.has(text)) return null;
-  return text;
-}
-
-/** 把输入框里的内容拆成扩展名（支持逗号、顿号、空格分隔），并按序去重。 */
-function parseExtensions(text: string): { valid: string[]; dropped: number } {
-  const tokens = text.split(/[\s,，、;；/]+/).filter(Boolean);
-  const valid: string[] = [];
-  let dropped = 0;
-  for (const token of tokens) {
-    const ext = normalizeExtension(token);
-    if (!ext) {
-      dropped += 1;
-      continue;
-    }
-    if (!valid.includes(ext)) valid.push(ext);
-  }
-  return { valid, dropped };
-}
-
-/** 某个 Profile 的扩展名是否被列表里更靠前的普通 Profile 完全覆盖（§2.2 末条）。 */
-function shadowedBy(profiles: RingProfile[], index: number): RingProfile | null {
-  const profile = profiles[index];
-  if (!profile || profile.kind !== "normal" || profile.extensions.length === 0) return null;
-  return (
-    profiles.slice(0, index).find(
-      (earlier) =>
-        earlier.kind === "normal" &&
-        profile.extensions.every((ext) =>
-          earlier.extensions.some((own) => own.toLowerCase() === ext.toLowerCase()),
-        ),
-    ) ?? null
-  );
-}
-
-/** 拖动会话：chip 来自候选面板，slice 来自圆环。 */
 interface DragState {
   source: "chip" | "slice";
   id: string;
@@ -216,22 +63,6 @@ interface DragState {
   canAdd: boolean;
 }
 
-/** 只保留还存在的预设：配置里若有已删预设的残留 id，读写前就地清掉。 */
-function clean(list: string[], known: ReadonlySet<string>): string[] {
-  return list.filter((id) => known.has(id));
-}
-
-/** 生成不冲突的 Profile id。 */
-function uniqueProfileId(profiles: RingProfile[]): string {
-  const used = new Set(profiles.map((p) => p.id));
-  let n = profiles.length + 1;
-  let id = `profile-${n}`;
-  while (used.has(id)) {
-    n += 1;
-    id = `profile-${n}`;
-  }
-  return id;
-}
 
 export default function RingSettings() {
   const config = useClipStore((s) => s.config);
@@ -244,7 +75,6 @@ export default function RingSettings() {
   const [filter, setFilter] = useState<Filter>("all");
   const [drag, setDrag] = useState<DragState | null>(null);
   const [editingPreset, setEditingPreset] = useState<string | null>(null);
-  const [gesture, setGesture] = useState<GestureStatus | null>(null);
   const [hint, setHint] = useState<string | null>(null);
 
   const ringRef = useRef<HTMLDivElement>(null);
@@ -253,45 +83,6 @@ export default function RingSettings() {
   const latest = useRef<{ list: string[] }>({ list: [] });
   const dragRef = useRef<DragState | null>(null);
   const reduceMotion = usePrefersReducedMotion();
-
-  /**
-   * 轮询手势现场状态。
-   *
-   * 为什么不是只查一次：授权是在**另一个进程**（系统设置）里改的，App 这边
-   * 只有 `AXIsProcessTrusted` 能看见。1.5s 一次的成本可以忽略，却能把
-   * 「勾上了但页面还写着未授权」这类误导彻底消掉。
-   */
-  useEffect(() => {
-    let alive = true;
-    const pull = () => {
-      void api
-        .ringGestureStatus()
-        .then((next) => {
-          if (alive) setGesture(next);
-        })
-        .catch(() => {
-          if (alive) setGesture(null);
-        });
-    };
-    pull();
-    const timer = window.setInterval(pull, 1500);
-    window.addEventListener("focus", pull);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-      window.removeEventListener("focus", pull);
-    };
-  }, []);
-
-  const axOk = gesture?.accessibility ?? null;
-
-  /**
-   * 授权动作已收敛到「设置 → 通用 → 权限与授权」。
-   *
-   * 这里保留状态诊断（未授权时用户在这里才知道手势为什么不生效），
-   * 但不再提供第二处授权按钮——两处授权入口会让用户怀疑哪一处才是真的。
-   */
-  const gotoPermissionHub = () => goToSection("general");
 
   const ring = config?.ring ?? null;
   const presets = useMemo(() => config?.conversion?.presets ?? [], [config]);
@@ -469,7 +260,7 @@ export default function RingSettings() {
       const moved = Math.hypot(e.clientX - st.startX, e.clientY - st.startY);
       const active = st.active || moved > DRAG_THRESHOLD;
 
-      // 命中一律用「预览后的布局」：添加 n+1 个 slot、排序仍是 n 个（规范 §3.2）。
+      // 命中一律用「预览后的布局」：添加 n+1 个 slot、排序仍是 n 个（Filee 行为）。
       let slot = -1;
       const el = ringRef.current;
       if (el) {
@@ -503,7 +294,7 @@ export default function RingSettings() {
       const list = latest.current.list;
 
       if (st.source === "chip") {
-        // 松在候选面板或无效区域：不变更模型（规范 §1.2）。
+        // 松在候选面板或无效区域：不变更模型（Filee 行为）。
         if (!st.canAdd || st.overPalette || st.slot < 0) return;
         commitSlices(withInsert(list, st.id, st.slot));
         return;
@@ -569,7 +360,7 @@ export default function RingSettings() {
     [presets, used, utilityOn, filter, q],
   );
 
-  /** 拖动中的预览顺序：与 drop 后模型完全一致（规范 §3.2）。 */
+  /** 拖动中的预览顺序：与 drop 后模型完全一致（Filee 行为）。 */
   const previewIds = useMemo(() => {
     if (!drag?.active) return selectedPresetIds;
     if (drag.overPalette) return selectedPresetIds;
@@ -633,56 +424,18 @@ export default function RingSettings() {
 
   return (
     <div className="space-y-[16px]">
-      <CardGroup
-        title="手势与权限"
-        subtitle="唯一入口：Finder 里按住 Option 拖动文件，拖到扇区上松手就换格式"
-      >
+      <CardGroup title="手势">
         <ToggleRow
           label="Option + 拖动唤起"
-          hint="按住 Option 拖动选中文件超过 8px 即弹出圆环，盘钉在起手点；只在前台是 Finder 时生效"
           checked={ring.option_tap}
           onChange={(v) => {
             const base = ringBase();
             if (base) commitRing({ ...base, option_tap: v });
           }}
         />
-        <Divider />
-        <Row label="辅助功能权限" hint="全局手势与回贴共用同一套授权；在「通用 → 权限与授权」里授权">
-          <span
-            className={
-              axOk ? "text-[12px]/[16px] text-emerald-300/90" : "text-[12px]/[16px] text-amber-300/90"
-            }
-          >
-            {axOk === null ? "检测中…" : axOk ? "已授权" : "未授权：Option+拖动不会生效"}
-          </span>
-          {!axOk && (
-            <Btn size="sm" onClick={gotoPermissionHub}>
-              去授权
-            </Btn>
-          )}
-        </Row>
-        <Row label="事件监听" hint="授权后 3 秒内自动接管，不需要重启 App">
-          <span
-            className={
-              gesture?.tapAlive
-                ? "text-[12px]/[16px] text-emerald-300/90"
-                : "text-[12px]/[16px] text-amber-300/90"
-            }
-          >
-            {gesture === null ? "检测中…" : gesture.tapAlive ? "已就绪" : "未启动"}
-          </span>
-        </Row>
-        {gesture?.lastNote && (
-          <p className="mt-[4px] text-[12px]/[16px] text-amber-300/80">
-            {gesture.tapAlive ? "最近一次没有响应" : "当前阻塞"}：{gesture.lastNote}
-          </p>
-        )}
       </CardGroup>
 
-      <CardGroup
-        title="文件类型 Profile"
-        subtitle="拖什么文件用哪张盘；列表顺序就是匹配顺序，第一个「覆盖这批全部扩展名」的获胜"
-      >
+      <CardGroup title="文件类型 Profile">
         <div className="divide-y divide-white/[0.06]">
           {profiles.map((profile, index) => {
             const shadow = shadowedBy(profiles, index);
@@ -749,19 +502,14 @@ export default function RingSettings() {
           })}
         </div>
         <div className="mt-[10px] flex items-center justify-between">
-          <span className="text-[12px]/[16px] text-white/35">
-            普通 Profile 优先于兜底；同族混选（png + jpg）会落在第一个覆盖它们的普通 Profile
-          </span>
+          <span />
           <Btn size="sm" onClick={addProfile}>
             新建 Profile
           </Btn>
         </div>
       </CardGroup>
 
-      <CardGroup
-        title={`圆环编排 · ${selected.name || selected.id}`}
-        subtitle="拖到扇区上松手就转换；这张盘只有一面，所有动作都排在同一圈上"
-      >
+      <CardGroup title={`圆环编排 · ${selected.name || selected.id}`}>
         <div className="mb-[10px] flex flex-wrap items-center gap-[8px]">
           <Segment
             label="编辑哪个 Profile"
@@ -780,7 +528,6 @@ export default function RingSettings() {
 
         <ToggleRow
           label="末尾追加工具动作"
-          hint="打包 ZIP / TAR.GZ / TAR、解压、PDF 每页转 PNG / JPG、PDF → CBZ 固定排在这张盘最后，按当前选择自动置灰不可用的那些"
           checked={ring.utility_actions}
           onChange={(v) => {
             const base = ringBase();
@@ -805,10 +552,7 @@ export default function RingSettings() {
 
         {hint && <p className="mt-[8px] text-center text-[12px]/[16px] text-amber-300/90">{hint}</p>}
         <div className="mt-[10px] flex flex-wrap items-center justify-between gap-[8px]">
-          <span className="min-w-0 text-[12px]/[16px] text-white/35">
-            {ring.utility_actions && `末尾 7 个是工具动作，不占这 ${MAX_SLICES} 个名额 · `}
-            索引 0 从 12 点开始顺时针 · hover 铅笔或右键编辑 · 扇区聚焦后 ←/→ 排序、Delete 移除
-          </span>
+          <span />
           {DEFAULT_SLICES[selected.id] && (
             <Btn
               size="sm"
@@ -821,10 +565,7 @@ export default function RingSettings() {
         </div>
       </CardGroup>
 
-      <CardGroup
-        title="可用动作"
-        subtitle="当前盘还没用到的预设；拖入圆环或双击追加到末尾"
-      >
+      <CardGroup title="可用动作">
         <div ref={paletteRef} className={["rounded-[10px] transition-shadow", removeTargeted ? "ring-2 ring-danger/60" : ""].join(" ")}>
           <div className="mb-[10px] flex flex-wrap items-center gap-[8px]">
             <SearchField value={search} onChange={setSearch} placeholder="搜索动作" width="w-[200px]" />
@@ -883,10 +624,7 @@ export default function RingSettings() {
         </div>
       </CardGroup>
 
-      <CardGroup
-        title="转换预设"
-        subtitle="每条预设都是一份完整配方：目标格式 + 质量 + 输出规则；两个 JPG 预设可以有不同质量"
-      >
+      <CardGroup title="转换预设">
         <div className="divide-y divide-white/[0.06]">
           {presets.map((p) => (
             <Row key={p.id} label={p.name} hint={presetCaption(p)}>
@@ -962,471 +700,3 @@ export default function RingSettings() {
   );
 }
 
-/** `#RRGGBB` / `RRGGBB` / `#RGB`（与 Rust `parse_hex_rgb` 接受范围一致）。 */
-const HEX_COLOR = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-
-/**
- * Profile 编辑器：名称 + 匹配扩展名 + 类型（普通 / 混合兜底）。
- *
- * 扩展名用「文本输入 + 快速填充」而不是一个个 chip 输入：手写一行
- * `png, jpg, .webp` 比连点十几次快，规范化规则与后端完全一致（非法项
- * 即时丢弃并提示），不会出现「界面上有、后端存不下」的偏差。
- */
-function ProfileDialog({
-  profile,
-  others,
-  onClose,
-  onPatch,
-  onDelete,
-}: {
-  profile: RingProfile;
-  others: RingProfile[];
-  onClose: () => void;
-  onPatch: (update: Partial<RingProfile>) => void;
-  onDelete: () => void;
-}) {
-  const [name, setName] = useState(profile.name);
-  const nameDirty = useRef(false);
-  useEffect(() => {
-    if (!nameDirty.current) setName(profile.name);
-  }, [profile.name]);
-
-  const [extText, setExtText] = useState(profile.extensions.join(", "));
-  const extDirty = useRef(false);
-  // 只在切到另一个 Profile 时重同步：跟着回写同步会在输入过程中抢走光标。
-  useEffect(() => {
-    if (extDirty.current) return;
-    setExtText(profile.extensions.join(", "));
-  }, [profile.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const parsed = parseExtensions(extText);
-  const missing: string[] = [];
-  for (const token of extText.split(/[\s,，、;；/]+/).filter(Boolean)) {
-    if (!normalizeExtension(token)) missing.push(token);
-  }
-
-  const commitName = () => {
-    if (!nameDirty.current) return;
-    nameDirty.current = false;
-    const next = name.trim();
-    if (next && next !== profile.name) onPatch({ name: next });
-    else setName(profile.name);
-  };
-
-  /** 扩展名合法就即时保存（与「每次成功编辑立即提交」一致）。 */
-  const commitExt = (text: string) => {
-    extDirty.current = false;
-    const { valid } = parseExtensions(text);
-    const same =
-      valid.length === profile.extensions.length &&
-      valid.every((ext, i) => ext === profile.extensions[i]);
-    if (!same) onPatch({ extensions: valid });
-  };
-
-  const close = () => {
-    commitName();
-    commitExt(extText);
-    onClose();
-  };
-  const closeRef = useRef(close);
-  closeRef.current = close;
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      closeRef.current();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
-
-  const mixed = profile.kind === "mixed_fallback";
-  /** 兜底盘的空扩展名 = catch-all；普通盘的空扩展名 = 永不匹配，必须说清楚。 */
-  const emptyWarning = !mixed && parsed.valid.length === 0;
-  const shadow = shadowedBy([...others, profile], [...others, profile].length - 1);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/55 p-[24px]"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${profile.name} Profile`}
-      onClick={close}
-    >
-      <div
-        className="dialog-surface max-h-[86vh] w-[420px] overflow-y-auto rounded-[12px] p-[16px] shadow-modal"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <Input
-          aria-label="Profile 名称"
-          autoFocus
-          value={name}
-          onChange={(e) => {
-            nameDirty.current = true;
-            setName(e.target.value);
-          }}
-          onBlur={commitName}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-          }}
-        />
-        <div className="mt-[6px] text-[12px]/[16px] text-white/45">
-          {profile.id} · {profile.preset_ids.length} 个动作
-        </div>
-
-        <Divider />
-
-        <Row label="类型" hint="普通 Profile 优先匹配；混合兜底负责「没配置的类型」">
-          <Segment
-            items={[
-              { value: "normal", label: "普通" },
-              { value: "mixed_fallback", label: "混合兜底" },
-            ]}
-            value={profile.kind}
-            onChange={(v) => onPatch({ kind: v })}
-          />
-        </Row>
-
-        <div className="mt-[10px]">
-          <div className="mb-[6px] text-[12px]/[16px] text-white/60">匹配扩展名</div>
-          <Input
-            aria-label="匹配扩展名"
-            value={extText}
-            placeholder={mixed ? "留空 = 兜住所有未匹配的类型" : "例如 png, jpg, jpeg, webp"}
-            onChange={(e) => setExtText(e.target.value)}
-            onBlur={() => commitExt(extText)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-            spellCheck={false}
-          />
-          <div className="mt-[6px] flex flex-wrap items-center gap-[6px]">
-            <span className="text-[11px]/[15px] text-white/35">快速填充</span>
-            <Btn size="sm" onClick={() => setExtText(IMAGE_EXTS.join(", "))}>
-              图片族
-            </Btn>
-            <Btn size="sm" onClick={() => setExtText(TEXT_EXTS.join(", "))}>
-              文本族
-            </Btn>
-            <Btn size="sm" onClick={() => setExtText(DOC_EXTS.join(", "))}>
-              文档族
-            </Btn>
-            <Btn size="sm" onClick={() => setExtText("")}>
-              清空
-            </Btn>
-          </div>
-          <div className="mt-[6px] text-[11px]/[15px] text-white/40">
-            已识别 {parsed.valid.length} 个：{parsed.valid.join(" · ") || "无"}
-          </div>
-          {missing.length > 0 && (
-            <div className="mt-[4px] text-[11px]/[15px] text-amber-300/85">
-              已忽略 {missing.length} 个无效项（{missing.slice(0, 4).join("、")}
-              {missing.length > 4 ? "…" : ""}）：最长 {MAX_EXTENSION_LEN} 字符，只允许字母、数字与 . _ -
-            </div>
-          )}
-          {emptyWarning && (
-            <div className="mt-[4px] text-[11px]/[15px] text-amber-300/85">
-              普通 Profile 没有扩展名就不会匹配任何文件；要兜住所有类型请改成「混合兜底」
-            </div>
-          )}
-          {shadow && (
-            <div className="mt-[4px] text-[11px]/[15px] text-amber-300/85">
-              这些扩展名已被「{shadow.name}」完全覆盖：在当前排序下轮不到它
-            </div>
-          )}
-        </div>
-
-        <div className="mt-[16px] flex justify-end gap-[8px]">
-          <Btn size="sm" variant="danger" onClick={onDelete}>
-            删除 Profile
-          </Btn>
-          <Btn size="sm" variant="primary" onClick={close}>
-            完成
-          </Btn>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * 预设编辑器：一份配方 = 名称 + 目标 + 图像选项 + 输出规则。
- *
- * 以前这里只有一个全局 JPG 质量滑块，所以「两个不同质量的 JPG 动作」根本做不出来；
- * 现在每条预设自带质量与输出规则，复制一份就能得到第二个 JPG。
- */
-function PresetDialog({
-  preset,
-  inProfiles,
-  onClose,
-  onPatch,
-  onDuplicate,
-  onDelete,
-  onRemoveFrom,
-}: {
-  preset: ConversionPreset;
-  /** 这条预设当前出现在哪些 Profile 里。 */
-  inProfiles: RingProfile[];
-  onClose: () => void;
-  onPatch: (update: Partial<ConversionPreset>) => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
-  onRemoveFrom: (profileId: string) => void;
-}) {
-  const [name, setName] = useState(preset.name);
-  /**
-   * 有未提交的改名时，外部回写（自己的 patch 响应也算）不得覆盖草稿。
-   *
-   * 早期依赖 `[preset.id, preset.name]` 无条件同步：输入到一半时只要配置
-   * 回流一次，光标就会跳到末尾（与下面背景色草稿同一个坑）。
-   */
-  const nameDirty = useRef(false);
-  useEffect(() => {
-    if (!nameDirty.current) setName(preset.name);
-  }, [preset.name]);
-
-  /** 背景色草稿：合法值即时保存，非法值不落盘（后端回退成白色会让人误以为设置没生效）。 */
-  const [bg, setBg] = useState(preset.image.alpha_background);
-  // 只在切到另一条预设时重同步：跟着 `preset.image.alpha_background` 同步会在
-  // 每次输入合法值→回写→effect 把草稿抢回去，光标跳到最后（#abc → #abcdef 打不完）。
-  useEffect(() => setBg(preset.image.alpha_background), [preset.id]);
-  const bgValid = HEX_COLOR.test(bg.trim());
-
-  const targetsJpg = preset.target === "jpg";
-  const isImage = preset.target !== "*" && IMAGE_TARGETS.includes(preset.target);
-
-  /**
-   * 质量滑块：拖动时只改本地草稿，停手 300ms 才提交。
-   *
-   * 直接绑 `preset.image.jpeg_quality` 有两个毛病：①每挑 5% 就写一次配置；
-   * ②回写比拖动慢时，滑块会被拽回上一档（40→45→50 显示成 45→50→45→50）。
-   */
-  const [quality, setQuality] = useState(preset.image.jpeg_quality);
-  const qualityTimer = useRef<number | null>(null);
-  const qualityPending = useRef<number | null>(null);
-
-  const flushQuality = () => {
-    if (qualityTimer.current !== null) {
-      window.clearTimeout(qualityTimer.current);
-      qualityTimer.current = null;
-    }
-    const v = qualityPending.current;
-    qualityPending.current = null;
-    if (v !== null && v !== preset.image.jpeg_quality) {
-      onPatch({ image: { ...preset.image, jpeg_quality: v } });
-    }
-  };
-  // 卸载（点「完成」/ 切到别的预设）时把最后一档写回去，否则快速关闭会丢改动。
-  const flushRef = useRef(flushQuality);
-  flushRef.current = flushQuality;
-  useEffect(() => () => flushRef.current(), []);
-
-  const onQuality = (v: number) => {
-    setQuality(v);
-    qualityPending.current = v;
-    if (qualityTimer.current !== null) window.clearTimeout(qualityTimer.current);
-    qualityTimer.current = window.setTimeout(() => flushRef.current(), 300);
-  };
-
-  const commitName = () => {
-    if (!nameDirty.current) return;
-    nameDirty.current = false;
-    const next = name.trim();
-    if (next && next !== preset.name) onPatch({ name: next });
-    else setName(preset.name);
-  };
-
-  /**
-   * 关闭前先把未提交的名称写回去。
-   *
-   * 只有 Esc 走这条路时，直接在遮罩上点一下就会丢掉刚输入的改名；
-   * 现在遮罩、Esc、「完成」按钮都走同一个出口。
-   */
-  const close = () => {
-    commitName();
-    onClose();
-  };
-  const closeRef = useRef(close);
-  closeRef.current = close;
-
-  // Esc 关闭（与其余浮层一致）。只绑一次：回调走 ref 取最新闭包，
-  // 否则每敲一个字符就重绑一次监听。
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      closeRef.current();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/55 p-[24px]"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${preset.name} 预设`}
-      onClick={close}
-    >
-      <div
-        className="dialog-surface max-h-[86vh] w-[400px] overflow-y-auto rounded-[12px] p-[16px] shadow-modal"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <Input
-          aria-label="预设名称"
-          autoFocus
-          value={name}
-          onChange={(e) => {
-            nameDirty.current = true;
-            setName(e.target.value);
-          }}
-          onBlur={commitName}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-          }}
-        />
-        <div className="mt-[6px] text-[12px]/[16px] text-white/50">
-          {presetCaption(preset)} · {preset.id}
-        </div>
-
-        {targetsJpg && (
-          <div className="mt-[12px]">
-            <SliderRow
-              label="输出质量"
-              value={quality}
-              min={40}
-              max={100}
-              step={5}
-              format={(v) => `${v}%`}
-              onChange={onQuality}
-            />
-          </div>
-        )}
-
-        {targetsJpg && (
-          <Row label="透明背景" hint="透明图转 JPG 时的合成色；不显式指定会是黑底">
-            <Input
-              aria-label="透明背景色"
-              className={"w-[110px]" + (bgValid ? "" : " border-danger/50")}
-              value={bg}
-              onChange={(e) => {
-                const next = e.target.value;
-                setBg(next);
-                if (HEX_COLOR.test(next.trim())) {
-                  onPatch({ image: { ...preset.image, alpha_background: next.trim() } });
-                }
-              }}
-              onBlur={() => {
-                if (!bgValid) setBg(preset.image.alpha_background);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-              }}
-              spellCheck={false}
-            />
-            {!bgValid && (
-              <span className="text-[11px]/[14px] text-danger-soft">#RRGGBB</span>
-            )}
-          </Row>
-        )}
-
-        {isImage && (
-          <ToggleRow
-            label="同格式也重编码"
-            hint="源文件已经是目标格式时仍重新编码（例如 JPG 降质量）；默认跳过"
-            checked={preset.reencode_same_format}
-            onChange={(v) => onPatch({ reencode_same_format: v })}
-          />
-        )}
-
-        <Divider />
-
-        <Row label="输出目录" hint="留空 = 与源文件同目录；源文件永远不会被覆盖">
-          <div className="flex items-center gap-[6px]">
-            <Btn
-              size="sm"
-              onClick={() =>
-                void api
-                  .pickDirectory()
-                  .then((dirs) => {
-                    if (dirs[0]) onPatch({ output: { ...preset.output, dir: dirs[0] } });
-                  })
-                  .catch(() => {})
-              }
-            >
-              选择…
-            </Btn>
-            <span className="max-w-[160px] truncate text-[12px]/[16px] text-white/55">
-              {preset.output.dir || "同目录"}
-            </span>
-            {preset.output.dir && (
-              <Btn size="sm" onClick={() => onPatch({ output: { ...preset.output, dir: "" } })}>
-                清空
-              </Btn>
-            )}
-          </div>
-        </Row>
-
-        <Row label="重名处理" hint="只对输出文件生效，源文件始终受保护">
-          <Segment
-            items={[
-              { value: "rename", label: "递增" },
-              { value: "overwrite", label: "覆盖" },
-              { value: "skip", label: "跳过" },
-            ]}
-            value={preset.output.conflict}
-            onChange={(v) => onPatch({ output: { ...preset.output, conflict: v } })}
-          />
-        </Row>
-
-        <ToggleRow
-          label="只在变小时保存"
-          hint="结果比同名输出更大时丢弃，不白白占空间"
-          checked={preset.output.only_if_smaller}
-          onChange={(v) => onPatch({ output: { ...preset.output, only_if_smaller: v } })}
-        />
-
-        <div className="mt-[12px] text-[12px]/[16px] text-white/45">
-          当前位于：
-          {inProfiles.length === 0 ? "未使用" : inProfiles.map((p) => p.name || p.id).join("、")}
-        </div>
-
-        <div className="mt-[14px] flex flex-wrap justify-end gap-[8px]">
-          <Btn size="sm" onClick={onDuplicate}>
-            复制一份
-          </Btn>
-          {!preset.builtin && (
-            <Btn size="sm" variant="danger" onClick={onDelete}>
-              删除预设
-            </Btn>
-          )}
-          {inProfiles.map((p) => (
-            <Btn key={p.id} size="sm" variant="danger" onClick={() => onRemoveFrom(p.id)}>
-              从「{p.name || p.id}」移除
-            </Btn>
-          ))}
-          <Btn size="sm" variant="primary" onClick={close}>
-            完成
-          </Btn>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** 跟随系统「减少动态效果」：开启后所有预览直接到位，功能不变。 */
-function usePrefersReducedMotion(): boolean {
-  const [reduce, setReduce] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setReduce(mq.matches);
-    const on = () => setReduce(mq.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
-  return reduce;
-}

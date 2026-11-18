@@ -48,8 +48,8 @@ pub(super) enum FastSelection {
     Unknown,
 }
 
-// 注意：`copyElementAtPosition` / `getPid` / `createSystemWide` 三个符号在
-// `core::desktop_menu` 里也声明了。同一 crate 内重复声明必须**签名完全一致**，
+// 注意：`copyElementAtPosition` / `getPid` / `createSystemWide` 这些符号在
+// `core::statusbar::cf` 等处也声明了。同一 crate 内重复声明必须**签名完全一致**，
 // 否则 rustc 报 `clashing_extern_declarations`，而且签名一旦漂移就是未定义行为。
 // 改这里时请同步那边。
 #[link(name = "ApplicationServices", kind = "framework")]

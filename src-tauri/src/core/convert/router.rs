@@ -1,6 +1,6 @@
 //! 路由规划器：以格式为节点、引擎边为有向加权边，用 Dijkstra 选最便宜路径。
 //!
-//! 对照 docs/REA-Filee-Conversion.md §2.4：
+//! 对照 README「三、环形文件转换」：
 //! - 普通路由最多 3 步（`MAX_STEPS`），中间产物不进最终输出；
 //! - 源格式 == 目标格式时**只认显式 self edge**，既不默认复制，也不默认非法；
 //! - `Animated` / `Ocr` 这类特殊边不参与普通选路，必须由专门模式规划。
@@ -91,7 +91,7 @@ pub fn plan(from: ConvertFormat, to: ConvertFormat, allow_self: bool) -> Result<
         .filter(|e| e.mode.is_chainable() || (e.mode == EdgeMode::Terminal && e.to == to))
         .collect();
 
-    // 同格式：只认显式 self edge（§2.4）。
+    // 同格式：只认显式 self edge（Filee 行为）。
     if from == to {
         if !allow_self {
             return Err(NoRoute::SameFormat);

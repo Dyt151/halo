@@ -109,6 +109,8 @@ export interface SyncConfig {
 export interface HotkeyConfig {
   toggle: string;
   stack_paste: string;
+  /** 语音指令条：弹出的同时把光标放进输入框，听写落在里面。 */
+  voice_cmd: string;
 }
 
 /** Profile 类型：决定选盘优先级（与 Rust `RingProfileKind` 对齐）。 */
@@ -354,20 +356,6 @@ export type ConvertFormat =
   | "pdf"
   | "docx";
 
-export const CONVERT_FORMAT_LABELS: Record<ConvertFormat, string> = {
-  png: "PNG 图片",
-  jpg: "JPG 图片",
-  webp: "WebP 图片",
-  gif: "GIF 图片",
-  bmp: "BMP 图片",
-  tiff: "TIFF 图片",
-  heic: "HEIC 图片",
-  html: "HTML",
-  txt: "纯文本",
-  pdf: "PDF",
-  docx: "Word",
-};
-
 /** 目标规格：显式格式，或 `"*"` = 与源格式相同（Rust `TargetSpec`）。 */
 export type TargetSpec = ConvertFormat | "*";
 
@@ -382,7 +370,7 @@ export interface ImageOptions {
   alpha_background: string;
 }
 
-/** 输出规则（Rust `OutputRule`，规范 §4）。 */
+/** 输出规则（Rust `OutputRule`，Filee 行为）。 */
 export interface OutputRule {
   /** 输出目录；空串 = 与源文件同目录。 */
   dir: string;
@@ -456,12 +444,6 @@ export interface StatusBarConfig {
   enabled: boolean;
   /** 面板显示的模块及其顺序。 */
   sections: StatusBarSection[];
-  /** 面板里滚轮直接调音量。 */
-  scroll_adjusts_volume: boolean;
-  /** 滚轮调节的方向。 */
-  scroll_scope: "output" | "input";
-  /** 滚轮方向反转。 */
-  scroll_natural: boolean;
   /** 图标中心画什么。 */
   glyph_center: GlyphCenter;
   /** 外环画电量。 */
@@ -584,6 +566,8 @@ export interface StatusBarInputSource {
   selected: boolean;
   /** 无图标输入源的 1~2 字标记（正版 `InputSourceShortLabel`），读不出时为 null。 */
   marker: string | null;
+  /** 输入法自带的设置 App 路径（微信输入法 → WeTypeSettings.app）；Apple 自带为 null。 */
+  settings_app: string | null;
 }
 
 /** Wi-Fi / 首选链路状态（Rust `NetworkState`）。 */
@@ -649,14 +633,104 @@ export interface StatusBarWifiScan {
   hotspot: boolean;
 }
 
-/** 输入法切换提示（Rust `InputSourceHint`，事件 `halo://input-source-changed`）。 */
-export interface InputSourceHint {
-  id: string;
+/** 代理模式三档（Rust `ProxyPage::mode`，Clash `PATCH /configs` 的三个取值）。 */
+export type ProxyMode = "rule" | "global" | "direct";
+
+/** 代理策略组的一个成员（Rust `ProxyNode`）。信息行（「剩余流量…」）也是成员。 */
+export interface StatusBarProxyNode {
   name: string;
-  marker: string | null;
-  /** 在可切换列表里的位置（从 1 开始）；读不到时为 0，前端不画圆点。 */
-  index: number;
-  total: number;
+  /** `ss` / `vmess` / `select` / `url-test`…；读不到为空串。 */
+  kind: string;
+  /** 最近一次延迟（毫秒）；超时或未测为 null。 */
+  delay: number | null;
+}
+
+/** 代理策略组（Rust `ProxyGroup`，Clash `/proxies` 的一项）。 */
+export interface StatusBarProxyGroup {
+  name: string;
+  /** `select` / `url-test` / `fallback` / `load-balance`… */
+  kind: string;
+  current: string | null;
+  /** Clash 的 `hidden`：正版也不在菜单里显示这类组。 */
+  hidden: boolean;
+  delay: number | null;
+  nodes: StatusBarProxyNode[];
+}
+
+/** 代理（VPN）二级页一次完整读数（Rust `ProxyPage`）。 */
+export interface StatusBarProxyPage {
+  available: boolean;
+  /** `clash` = 有控制口（全能控）；`probe` = 只探到端口；`none` = 没核心（配合 `available` 表示失效的接管）。 */
+  source: "clash" | "probe" | "none";
+  core_running: boolean;
+  mixed_port: number;
+  /** 实际控制口地址（如 `127.0.0.1:9097`）；没有则空串。 */
+  controller: string;
+  /** 系统代理三样里任一开着且指向本机 = 已在接管。 */
+  takeover: boolean;
+  takeover_web: boolean;
+  takeover_https: boolean;
+  takeover_socks: boolean;
+  /** 系统代理实际指向的本机端口；没接管时 0。核心换过端口后它和 `mixed_port` 可以不同。 */
+  proxy_port: number;
+  /** `proxy_port` 上有没有人监听。接管开着而这里是 false，网页就打不开。 */
+  takeover_alive: boolean;
+  /** `networksetup` 的网络服务名（如 `Wi-Fi`）；空串 = 认不出当前服务。 */
+  service: string;
+  mode: ProxyMode | null;
+  groups: StatusBarProxyGroup[];
+  /** 虚拟网卡（TUN）状态：第一版只读，不给开关。 */
+  tun_enabled: boolean | null;
+  up_bps: number | null;
+  down_bps: number | null;
+  /** `proxy` = 走代理的收发；`interface` = 本机网卡计数（口径更宽）。 */
+  speed_scope: "proxy" | "interface";
+  test_url: string;
+  /** 可直接展示的中文说明；正常时为空串，绝不含订阅密钥。 */
+  message: string;
+}
+
+/** 代理页可见时的网速轮询（Rust `ProxySpeed`）。 */
+export interface StatusBarProxySpeed {
+  up_bps: number | null;
+  down_bps: number | null;
+  speed_scope: "proxy" | "interface";
+}
+
+/** 代理写操作的结果（Rust `ProxyOutcome`）。失败原因要显示在页面上，不弹通用错误。 */
+export interface StatusBarProxyOutcome {
+  code: "ok" | "failed" | "unsupported";
+  message: string;
+}
+
+/** 自动换节点配置（Rust `AutoSwitchConfig`，存 ~/.halo/autoswitch.json）。 */
+export interface AutoSwitchConfig {
+  enabled: boolean;
+  router_group: string;
+  local_group: string;
+  min_speed_kbps: number;
+  probe_interval_secs: number;
+  daily_cap: number;
+  /** 只读：钥匙串里是否已存路由器 API 密钥。 */
+  has_router_secret: boolean;
+}
+
+/** 自动换节点卡片读数（Rust `AutoSwitchState`）。 */
+export interface AutoSwitchState {
+  config: AutoSwitchConfig;
+  backend: "router" | "local" | "none";
+  backend_label: string;
+  current_node: string;
+  last_speed_kbps: number | null;
+  last_probe_at: number | null;
+  last_switch_at: number | null;
+  last_switch_from: string;
+  last_switch_to: string;
+  switches_today: number;
+  consecutive_bad: number;
+  status: string;
+  /** 最近 20 条决策日志（新→旧）。 */
+  log: string[];
 }
 
 /** 蓝牙设备（Rust `BluetoothDevice`）：已连接与已配对的都会列出。 */
@@ -673,6 +747,18 @@ export interface StatusBarBluetooth {
   available: boolean;
   powered: boolean;
   devices: StatusBarBluetoothDevice[];
+}
+
+/** 无线麦 SayAll（Rust `sayall::State`）：第三方 App，Halo 只做入口与开关。 */
+export interface SayAllState {
+  /** 这台 Mac 上装没装；没装时 Halo 里这一项整个不出现。 */
+  installed: boolean;
+  version: string | null;
+  running: boolean;
+  /** 这个版本的 SayAll 认不认「菜单栏显示图标」这个键；不认时不能给开关。 */
+  status_bar_icon_supported: boolean;
+  /** SayAll 自己的「菜单栏显示图标」偏好（它只在启动时读一次）。 */
+  status_bar_visible: boolean;
 }
 
 /** 齿轮可打开的系统设置面板（Rust `SYSTEM_PANES` 白名单键）。 */

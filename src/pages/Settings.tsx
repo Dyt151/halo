@@ -231,23 +231,21 @@ export default function Settings({ section }: { section: MainPage }) {
           <PermissionSection />
 
           {draft ? (
-            <CardGroup title="基础设置" subtitle="剪贴板记录与界面外观">
+            <CardGroup title="基础设置">
               <div className="space-y-[2px]">
                 <ToggleRow
                   label="剪贴板监控"
-                  hint="关闭后不再记录新的剪贴内容"
                   checked={draft.monitor_enabled}
                   onChange={(v) => update({ monitor_enabled: v })}
                 />
                 <Divider />
                 <ToggleRow
                   label="提示音"
-                  hint="复制入库与回贴成功后播放系统音效"
                   checked={draft.sound_enabled}
                   onChange={(v) => update({ sound_enabled: v })}
                 />
                 <Divider />
-                <Row label="外观" hint="跟随系统时随 macOS 浅色/深色自动切换">
+                <Row label="外观">
                   <Segment
                     items={[
                       { value: "system", label: "跟随系统" },
@@ -268,8 +266,8 @@ export default function Settings({ section }: { section: MainPage }) {
 
       {section === "clipboard" && cfg && (
         <div className="space-y-[16px]">
-          <div className="grid grid-cols-1 items-start gap-[16px] md:grid-cols-2">
-            <CardGroup title="面板" subtitle="快捷键唤出的悬浮横条">
+          <div className="grid grid-cols-1 items-start gap-[16px]">
+            <CardGroup title="面板">
               <div className="space-y-[2px]">
                 <SelectRow
                   label="出现位置"
@@ -299,8 +297,9 @@ export default function Settings({ section }: { section: MainPage }) {
                   label="卡片排列"
                   value={cfg.board_style}
                   options={[
-                    { value: "horizontal", label: "横向" },
-                    { value: "vertical", label: "纵向" },
+                    { value: "list", label: "列表" },
+                    { value: "horizontal", label: "横向卡片" },
+                    { value: "vertical", label: "纵向卡片" },
                   ]}
                   onChange={(v) => update({ board_style: v })}
                   width="w-[120px]"
@@ -335,21 +334,18 @@ export default function Settings({ section }: { section: MainPage }) {
                 <Divider />
                 <ToggleRow
                   label="粘贴前去除尾部空白"
-                  hint="回贴文本时去掉末尾的空行/空格"
                   checked={cfg.paste_trim_trailing}
                   onChange={(v) => update({ paste_trim_trailing: v })}
                 />
                 <Divider />
                 <ToggleRow
                   label="单击卡片直接回贴"
-                  hint="关闭时单击仅复制，双击或 Enter 回贴"
                   checked={cfg.paste_on_single_click}
                   onChange={(v) => update({ paste_on_single_click: v })}
                 />
                 <Divider />
                 <ToggleRow
                   label="删除前确认"
-                  hint="删除单条或清空历史前弹出确认"
                   checked={cfg.confirm_on_delete}
                   onChange={(v) => update({ confirm_on_delete: v })}
                 />
@@ -357,14 +353,14 @@ export default function Settings({ section }: { section: MainPage }) {
             </CardGroup>
           </div>
 
-          <CardGroup title="剪贴板堆栈" subtitle="收集多条后统一粘贴">
+          <CardGroup title="剪贴板堆栈">
             <StackPanel />
           </CardGroup>
 
           <HotkeySettings />
 
-          <CardGroup title="存储与监控" subtitle="保留多少、扫描多勤；修改后立即生效">
-            <div className="grid grid-cols-1 items-start gap-[24px] md:grid-cols-2">
+          <CardGroup title="存储与监控">
+            <div className="grid grid-cols-1 items-start gap-[16px]">
               <div className="space-y-[12px]">
                 <SliderRow
                   label="磁盘大小上限"
@@ -441,7 +437,7 @@ export default function Settings({ section }: { section: MainPage }) {
             </div>
           </CardGroup>
 
-          <CardGroup title="应用黑名单" subtitle="来自这些 App 的内容不会被记录">
+          <CardGroup title="应用黑名单">
             <div className="flex items-center gap-[8px]">
               <Input
                 value={blacklistInput}
@@ -475,9 +471,7 @@ export default function Settings({ section }: { section: MainPage }) {
                 ))}
               </div>
             ) : (
-              <p className="mt-[12px] text-[12px]/[16px] text-white/45">
-                暂无黑名单，所有 App 的内容都会被记录。
-              </p>
+              <p className="mt-[12px] text-[12px]/[16px] text-white/45">暂无黑名单</p>
             )}
           </CardGroup>
         </div>
@@ -541,9 +535,8 @@ function AboutSection() {
             一个开源、可扩展的 macOS 剪贴板管理器。
           </p>
           <p className="mt-[6px] text-[11px]/[16px] text-white/35">
-            状态栏面板与菜单栏图标的几何、配色取自 Status Trio（Apache-2.0，Copyright 2026
-            lingyired），已改写为 Rust + CoreGraphics 并调整了参数；完整许可见仓库根目录的
-            LICENSE-STATUS-TRIO.txt 与 NOTICE-STATUS-TRIO.txt。
+            状态栏图标几何与配色取自 Status Trio（Apache-2.0，Copyright 2026 lingyired），
+            许可见 LICENSE-STATUS-TRIO.txt。
           </p>
         </div>
 
@@ -590,31 +583,16 @@ function AboutSection() {
         </Row>
       </CardGroup>
 
-      <CardGroup title="隐私说明">
-        <ul className="space-y-[8px] text-[12px]/[18px] text-white/60">
-          <li>· 剪贴内容默认只存在本机 SQLite，不会上传到任何服务器。</li>
-          <li>· 同步需你主动开启；密码与口令存在系统钥匙串，不写入配置文件。</li>
-          <li>· 富文本预览经过白名单消毒，图片/图标只能读 ~/.halo 内的文件。</li>
-          <li>· 回贴依赖系统「辅助功能」权限，未授权时降级为仅复制。</li>
-        </ul>
-        <div className="mt-[12px] flex flex-wrap gap-[6px]">
-          <Btn size="sm" onClick={() => void api.openSystemSettings("accessibility")}>
-            辅助功能权限
-          </Btn>
-          <Btn size="sm" onClick={() => void api.openSystemSettings("privacy")}>
-            隐私与安全性
-          </Btn>
-        </div>
+      <CardGroup title="隐私">
+        <p className="text-[12px]/[18px] text-white/60">
+          剪贴内容只存在本机；同步需手动开启，敏感内容与图片不会上传。
+        </p>
       </CardGroup>
 
-      {/* 入口说明：Halo 没有 Dock 图标，用户很容易找不到「怎么关掉它」，
-          这里把后台形态、唤出方式与退出入口写清楚。 */}
       <CardGroup title="后台运行">
-        <ul className="space-y-[8px] text-[12px]/[18px] text-white/60">
-          <li>· Halo 不占 Dock，关掉窗口只是隐藏，进程继续监听剪贴板。</li>
-          <li>· 菜单栏图标点开是系统状态面板；剪贴板面板用快捷键（默认 ⌃⌥C）唤出。</li>
-          <li>· 要彻底停止，点下面的「退出 Halo」，或在任一窗口聚焦时按 ⌘Q。</li>
-        </ul>
+        <p className="text-[12px]/[18px] text-white/60">
+          关掉窗口只是隐藏，进程继续监听剪贴板；⌘Q 或下面按钮可彻底退出。
+        </p>
         <div className="mt-[12px]">
           <Btn
             size="sm"
@@ -630,7 +608,6 @@ function AboutSection() {
                 ) {
                   return;
                 }
-                // 退出会直接终止进程，promise 多半不会 resolve，所以不接错误分支。
                 void api.quitApp();
               })();
             }}

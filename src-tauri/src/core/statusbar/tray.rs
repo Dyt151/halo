@@ -440,6 +440,7 @@ pub(crate) fn resize_status_item(tray: &tauri::tray::TrayIcon<tauri::Wry>) {
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn resize_status_item(_tray: &tauri::tray::TrayIcon<tauri::Wry>) {}
 
+#[cfg(test)]
 fn frame_for(
     state: &GlyphState,
     options: &glyph::GlyphOptions,
@@ -485,7 +486,9 @@ fn apply(app: &AppHandle, frame: &Frame, announce: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::statusbar::{AudioDeviceState, BatteryState, GlyphState, NetworkState};
+    use crate::core::statusbar::{
+        AudioDeviceState, BatteryState, GlyphState, NetworkState, ProxyBar,
+    };
 
     fn state() -> GlyphState {
         GlyphState {
@@ -523,6 +526,7 @@ mod tests {
                 mute_available: true,
                 devices: Vec::new(),
             },
+            proxy: ProxyBar::Unknown,
         }
     }
 

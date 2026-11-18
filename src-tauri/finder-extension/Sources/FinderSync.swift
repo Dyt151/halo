@@ -31,24 +31,29 @@ final class HaloFinderSync: FIFinderSync {
         log("started from \(Bundle.main.bundlePath); monitoring \(monitored.map(\.path).sorted().joined(separator: ", "))")
     }
 
-    /// 菜单出现的范围。Finder Sync 不会对未监视的目录调用 `menu(for:)`；
-    /// 用户的主目录已经覆盖桌面、下载、文稿与普通 Finder 窗口，
-    /// `/Volumes` 覆盖外接盘。不监视 `/`：那会让 Finder 在每个系统目录里都
-    /// 唤醒扩展，收益很低。
+    /// 监视范围：主目录、外接盘，再加几个「不在主目录但用户真的会去」的位置。
     ///
-    /// 沙盒里的 `NSHomeDirectory()` 会返回扩展自己的容器，必须用
-    /// `getpwuid` 取真实主目录，否则监视的是容器、真实目录永远不出菜单。
+    /// 试过两种更大的方案，都不行：
+    /// - 只监视「主目录 + /Volumes」：/tmp 里没有菜单，用户看到的就是
+    ///   「换个文件夹 Halo 消失了」；
+    /// - 把根目录下一层全部塞进来（22 个，含 /private、/usr）：Finder 会
+    ///   **整批拒绝** directoryURLs，连原来能用的主目录也没菜单了。
+    /// 所以这里只放确认能和主目录共存的实体目录，且逐个检查存在性。
+    /// 另外，监视根目录（/）不会向下递归，不能拿来图省事。
     private func monitoredDirectories() -> Set<URL> {
         let home = realHomeDirectory()
-        var urls: Set<URL> = [
+        let candidates: [URL] = [
             home,
             // 桌面是 Finder 的特殊容器，不会因为监视了主目录就自动带上。
             home.appendingPathComponent("Desktop", isDirectory: true),
             URL(fileURLWithPath: "/Volumes", isDirectory: true),
+            URL(fileURLWithPath: "/Users/Shared", isDirectory: true),
+            // Finder 地址栏里的 /tmp 实际是 /private/tmp 的别名，要按实体路径监视。
+            URL(fileURLWithPath: "/private/tmp", isDirectory: true),
+            URL(fileURLWithPath: "/private/var/tmp", isDirectory: true),
+            URL(fileURLWithPath: "/opt", isDirectory: true),
         ]
-        // 目录不存在时不要塞进去，否则 Finder 会一直报监视失败。
-        urls = urls.filter { fileManager.fileExists(atPath: $0.path) }
-        return urls
+        return Set(candidates.filter { fileManager.fileExists(atPath: $0.path) })
     }
 
     private func realHomeDirectory() -> URL {
@@ -58,15 +63,24 @@ final class HaloFinderSync: FIFinderSync {
         return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
     }
 
+    /// 菜单归属目录：空白处右键用 targetedURL，选中项用自身或它的父目录。
+    private func menuContainerPath(_ controller: FIFinderSyncController) -> String {
+        if let target = controller.targetedURL()?.path { return target }
+        guard let first = controller.selectedItemURLs()?.first else { return "-" }
+        return first.hasDirectoryPath
+            ? first.path
+            : first.deletingLastPathComponent().path
+    }
+
     override func menu(for menuKind: FIMenuKind) -> NSMenu? {
+        let controller = FIFinderSyncController.default()
+
         switch menuKind {
-        case .contextualMenuForItems:
+        case .contextualMenuForItems, .contextualMenuForContainer:
+            // 能走到这里就说明 Finder 认为该目录在监视范围内（directoryURLs
+            // 只有实体目录，不含系统目录），不用再自己过滤一遍。
             let menu = buildMenu()
-            log("menu kind=\(menuKind.rawValue) items=\(menu.items.filter { !$0.isSeparatorItem }.count) selected=\(selectedPaths().count) target=\(FIFinderSyncController.default().targetedURL()?.path ?? "-")")
-            return menu
-        case .contextualMenuForContainer:
-            let menu = buildMenu()
-            log("menu kind=\(menuKind.rawValue) items=\(menu.items.filter { !$0.isSeparatorItem }.count) target=\(FIFinderSyncController.default().targetedURL()?.path ?? "-")")
+            log("menu kind=\(menuKind.rawValue) items=\(menu.items.filter { !$0.isSeparatorItem }.count) selected=\(selectedPaths().count) target=\(menuContainerPath(controller))")
             return menu
         default:
             log("menu kind=\(menuKind.rawValue) ignored")

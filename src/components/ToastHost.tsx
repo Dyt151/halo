@@ -33,7 +33,7 @@ export default function ToastHost({ variant = "floating" }: { variant?: "floatin
           className={cx(
             "pointer-events-auto flex max-w-[420px] animate-toast-in items-center gap-[10px]",
             "rounded-[9px] border px-[12px] py-[8px] text-[12px]/[16px]",
-            "bg-[var(--material-menu)] shadow-menu backdrop-blur-[28px]",
+            "toast-surface shadow-menu",
             TONE[t.tone] ?? TONE.info,
           )}
           onClick={() => dismissToast(t.id)}

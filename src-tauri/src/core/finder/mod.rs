@@ -138,7 +138,7 @@ pub fn ring_context_ok() -> bool {
     }
 }
 
-/// 起手点取证结果（Integrated §3.1：拖动内容必须包含文件或文件夹才进入会话）。
+/// 起手点取证结果（Filee 行为：拖动内容必须包含文件或文件夹才进入会话）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartHit {
     /// 指针下就是 Finder 里的文件或文件夹（目录只保留打包等工具动作）。

@@ -51,6 +51,10 @@ pub fn volume_feedback_enabled() -> bool {
     false
 }
 
+pub fn output_volume() -> Option<f64> {
+    None
+}
+
 pub fn set_volume(_scope: AudioScope, _volume: f64) -> Result<(), String> {
     Err("系统控制仅支持 macOS".to_string())
 }
@@ -64,6 +68,10 @@ pub fn set_default_audio(_scope: AudioScope, _device_id: u32) -> Result<(), Stri
 }
 
 pub fn select_input_source(_id: &str) -> Result<(), String> {
+    Err("系统控制仅支持 macOS".to_string())
+}
+
+pub fn open_ime_settings(_path: &str) -> Result<(), String> {
     Err("系统控制仅支持 macOS".to_string())
 }
 
@@ -100,6 +108,60 @@ pub fn wifi_name_access() -> &'static str {
 pub fn menu_bar_dark() -> Option<bool> {
     None
 }
+
+/// 非 macOS 没有「读 FlClash 配置 + macOS 系统代理」这套东西。
+pub fn proxy_page() -> super::ProxyPage {
+    super::ProxyPage::unavailable()
+}
+
+pub fn proxy_speed() -> super::ProxySpeed {
+    super::ProxySpeed::unavailable()
+}
+
+pub fn proxy_set_takeover(_enabled: bool) -> super::ProxyOutcome {
+    super::ProxyOutcome::failed("系统控制仅支持 macOS")
+}
+
+pub fn proxy_set_mode(_mode: &str) -> super::ProxyOutcome {
+    super::ProxyOutcome::failed("系统控制仅支持 macOS")
+}
+
+pub fn proxy_select_node(_group: &str, _node: &str) -> super::ProxyOutcome {
+    super::ProxyOutcome::failed("系统控制仅支持 macOS")
+}
+
+pub fn proxy_latency(_group: &str) -> Vec<super::ProxyNode> {
+    Vec::new()
+}
+
+pub fn autoswitch_config() -> super::AutoSwitchConfig {
+    super::AutoSwitchConfig::default()
+}
+
+pub fn autoswitch_set_config(_config: super::AutoSwitchConfig) -> super::ProxyOutcome {
+    super::ProxyOutcome::unsupported()
+}
+
+pub fn autoswitch_set_router_secret(_secret: String) -> super::ProxyOutcome {
+    super::ProxyOutcome::unsupported()
+}
+
+pub fn autoswitch_state() -> super::AutoSwitchState {
+    super::AutoSwitchState::unavailable()
+}
+
+pub fn autoswitch_check_now() -> super::AutoSwitchState {
+    super::AutoSwitchState::unavailable()
+}
+
+pub fn start_autoswitch_worker() {}
+
+pub fn proxy_open_app() -> super::ProxyOutcome {
+    super::ProxyOutcome::failed("系统控制仅支持 macOS")
+}
+
+/// 非 macOS 没有系统代理可观察，也不会有接管状态。
+pub fn start_proxy_watcher() {}
 
 /// 非 macOS 没有系统强调色可读，保持默认蓝。
 pub fn cache_system_accent() {}

@@ -9,9 +9,11 @@ pub mod glyph;
 pub mod tray;
 
 #[cfg(target_os = "macos")]
-mod cf;
+pub(crate) mod cf;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod volume_feedback;
 #[cfg(target_os = "macos")]
 use macos as platform;
 
@@ -165,6 +167,9 @@ pub struct InputSource {
     /// 无图标输入源的 1~2 个字标记（正版 `InputSourceShortLabel`）：ABC → A、
     /// 简体拼音 → 拼。读不出来时为 null，前端退回键盘符号。
     pub marker: Option<String>,
+    /// 输入法自带的设置 App 路径（微信输入法 → `WeTypeSettings.app`）。
+    /// Apple 自带的输入法没有这种东西，为 null。
+    pub settings_app: Option<String>,
 }
 
 /// 输入法列表与当前项。
@@ -306,6 +311,241 @@ impl WifiScan {
     }
 }
 
+/// 代理（VPN）详情页里的一个策略组（Clash `/proxies` 的一项）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProxyGroup {
+    pub name: String,
+    /// `select` / `url-test` / `fallback` / `load-balance`…
+    pub kind: String,
+    pub current: Option<String>,
+    /// Clash 的 `hidden`：策略组本身不在菜单里出现。
+    pub hidden: bool,
+    /// 组自己的最近一次延迟（毫秒），来自 `/proxies` 的 `history`。
+    pub delay: Option<u32>,
+    pub nodes: Vec<ProxyNode>,
+}
+
+/// 策略组里的一个成员。信息行（「剩余流量…」）也是成员，由前端按名字区分画法。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProxyNode {
+    pub name: String,
+    pub kind: String,
+    pub delay: Option<u32>,
+}
+
+/// 代理详情页一次读数。
+///
+/// `source` 决定页面能给到什么：`clash` 有控制口（模式/节点/延迟全能控），
+/// `probe` 只探到端口（只能开关接管），`none` 什么都没找到（`available=false`，
+/// 整行不显示）。核心已退但系统代理还挂着时是 `available=true` + `none`：
+/// 这种「失效的接管」必须留在页面上，否则用户没法把它关掉。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProxyPage {
+    pub available: bool,
+    pub source: String,
+    /// mixed-port 能连上 = 核心在跑。
+    pub core_running: bool,
+    pub mixed_port: u16,
+    /// 实际控制口地址（`127.0.0.1:9097`）；没有则空串。
+    pub controller: String,
+    /// 系统代理三样里有没有任一项开着且指向本机。
+    pub takeover: bool,
+    pub takeover_web: bool,
+    pub takeover_https: bool,
+    pub takeover_socks: bool,
+    /// 系统代理实际指向的本机端口；没接管时 0。核心换过端口后它和 `mixed_port` 可以不同。
+    pub proxy_port: u16,
+    /// `proxy_port` 上有没有人听。接管开着而这里是 `false`，网页就打不开——
+    /// 判定只看系统代理实际指向的端口，不看配置里的混合端口。
+    pub takeover_alive: bool,
+    /// `networksetup` 用的网络服务名（如 `Wi-Fi`）；空串 = 认不出当前服务。
+    pub service: String,
+    pub mode: Option<String>,
+    pub groups: Vec<ProxyGroup>,
+    /// 虚拟网卡（TUN）状态：只读，第一版不给开关。
+    pub tun_enabled: Option<bool>,
+    pub up_bps: Option<u64>,
+    pub down_bps: Option<u64>,
+    /// `proxy` = 代理流量（控制口），`interface` = 本机网卡计数。
+    pub speed_scope: String,
+    pub test_url: String,
+    /// 可直接展示的中文说明；正常时为空串。绝不包含订阅密钥。
+    pub message: String,
+}
+
+impl ProxyPage {
+    pub fn unavailable() -> Self {
+        Self {
+            available: false,
+            source: "none".to_string(),
+            core_running: false,
+            mixed_port: 0,
+            controller: String::new(),
+            takeover: false,
+            takeover_web: false,
+            takeover_https: false,
+            takeover_socks: false,
+            proxy_port: 0,
+            takeover_alive: false,
+            service: String::new(),
+            mode: None,
+            groups: Vec::new(),
+            tun_enabled: None,
+            up_bps: None,
+            down_bps: None,
+            speed_scope: "interface".to_string(),
+            test_url: String::new(),
+            message: String::new(),
+        }
+    }
+}
+
+/// 网速轮询：面板可见时每两秒一次，只做一次读数与差值。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProxySpeed {
+    pub up_bps: Option<u64>,
+    pub down_bps: Option<u64>,
+    pub speed_scope: String,
+}
+
+impl ProxySpeed {
+    pub fn unavailable() -> Self {
+        Self {
+            up_bps: None,
+            down_bps: None,
+            speed_scope: "interface".to_string(),
+        }
+    }
+}
+
+/// 代理写操作的结果。`code`：`ok` / `failed` / `unsupported`。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProxyOutcome {
+    pub code: String,
+    pub message: String,
+}
+
+impl ProxyOutcome {
+    pub fn ok() -> Self {
+        Self {
+            code: "ok".to_string(),
+            message: String::new(),
+        }
+    }
+
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self {
+            code: "failed".to_string(),
+            message: message.into(),
+        }
+    }
+
+    /// 平台不支持：前端按提示处理，不当成一次操作失败。
+    pub fn unsupported() -> Self {
+        Self {
+            code: "unsupported".to_string(),
+            message: "系统控制仅支持 macOS".to_string(),
+        }
+    }
+}
+
+/// 自动换节点配置（存 `~/.halo/autoswitch.json`，路由器密钥另存钥匙串）。
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct AutoSwitchConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// 路由器 OpenClash 里承载主流量的 Selector 组名。
+    #[serde(default = "default_autoswitch_group")]
+    pub router_group: String,
+    /// 本机 FlClash 里承载主流量的 Selector 组名。
+    #[serde(default = "default_autoswitch_group")]
+    pub local_group: String,
+    /// 低于这个速度（KB/s）算不达标。
+    #[serde(default = "default_autoswitch_min_speed")]
+    pub min_speed_kbps: u32,
+    /// 巡检间隔（秒）。
+    #[serde(default = "default_autoswitch_interval")]
+    pub probe_interval_secs: u32,
+    /// 每天最多自动切换次数（防 IP 频繁变化）。
+    #[serde(default = "default_autoswitch_cap")]
+    pub daily_cap: u32,
+    /// 只读标记：钥匙串里是否已存路由器 API 密钥。
+    #[serde(default)]
+    pub has_router_secret: bool,
+}
+
+fn default_autoswitch_group() -> String {
+    "良心云".to_string()
+}
+
+fn default_autoswitch_min_speed() -> u32 {
+    300
+}
+
+fn default_autoswitch_interval() -> u32 {
+    30
+}
+
+fn default_autoswitch_cap() -> u32 {
+    12
+}
+
+impl Default for AutoSwitchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            router_group: default_autoswitch_group(),
+            local_group: default_autoswitch_group(),
+            min_speed_kbps: default_autoswitch_min_speed(),
+            probe_interval_secs: default_autoswitch_interval(),
+            daily_cap: default_autoswitch_cap(),
+            has_router_secret: false,
+        }
+    }
+}
+
+/// 自动换节点的一次读数（前端卡片直接渲染）。
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoSwitchState {
+    pub config: AutoSwitchConfig,
+    /// `router` / `local` / `none`。
+    pub backend: String,
+    pub backend_label: String,
+    pub current_node: String,
+    pub last_speed_kbps: Option<u32>,
+    /// Unix 秒；下同。
+    pub last_probe_at: Option<u64>,
+    pub last_switch_at: Option<u64>,
+    pub last_switch_from: String,
+    pub last_switch_to: String,
+    pub switches_today: u32,
+    pub consecutive_bad: u32,
+    /// 可直接展示的中文一句话。
+    pub status: String,
+    /// 最近 20 条决策日志（新→旧）。
+    pub log: Vec<String>,
+}
+
+impl AutoSwitchState {
+    pub fn unavailable() -> Self {
+        Self {
+            config: AutoSwitchConfig::default(),
+            backend: "none".to_string(),
+            backend_label: "系统控制仅支持 macOS".to_string(),
+            current_node: String::new(),
+            last_speed_kbps: None,
+            last_probe_at: None,
+            last_switch_at: None,
+            last_switch_from: String::new(),
+            last_switch_to: String::new(),
+            switches_today: 0,
+            consecutive_bad: 0,
+            status: String::new(),
+            log: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BluetoothDevice {
     pub name: String,
@@ -368,6 +608,22 @@ impl AudioScope {
     }
 }
 
+/// 菜单栏图标上的代理（VPN）状态。
+///
+/// 值来自缓存而不是现读：判定接管要问 `networksetup`（三个子进程），而图标每两秒
+/// 就重画一次。缓存由代理页读数、接管写入和一个只看端口的观察线程一起维护。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum ProxyBar {
+    /// 还没读过（开机后没打开过代理页）。图标不提代理。
+    #[default]
+    Unknown,
+    /// 读过，且系统代理没开。这是默认状态，也不必占提示语。
+    Off,
+    On,
+    /// 接管还挂着，但那个端口上已经没有核心了：提示用户去关掉，否则网页打不开。
+    Stale,
+}
+
 /// 菜单栏图标专用的轻量读数。
 ///
 /// 图标每两秒重画一次，所以这里**不能**走 [`snapshot`]：蓝牙的设备清单靠
@@ -381,6 +637,7 @@ pub struct GlyphState {
     pub bluetooth_available: bool,
     pub bluetooth_powered: bool,
     pub audio_output: AudioDeviceState,
+    pub proxy: ProxyBar,
 }
 
 impl GlyphState {
@@ -392,596 +649,17 @@ impl GlyphState {
             bluetooth_available: false,
             bluetooth_powered: false,
             audio_output: AudioDeviceState::unavailable(),
+            proxy: ProxyBar::default(),
         }
     }
 }
 
-/// 读输入法列表。必须在主线程调用。
-pub fn input_sources() -> InputSources {
-    platform::input_sources()
-}
 
-/// 订阅输入法切换：切换瞬间让菜单栏图标闪一下新输入源的字牌（仅 macOS 有实现）。
-///
-/// 必须在主线程调用——分布式通知的回调挂在主线程 RunLoop 上，而 TIS 读数本身
-/// 也只认主线程，两件事正好落在同一个线程里。
-pub fn watch_input_source_changes(app: &tauri::AppHandle) {
-    platform::watch_input_source_changes(app);
-}
+mod api;
+mod spec;
 
-/// 输入法切换后在菜单栏图标上闪一下字牌（`marker` 是「拼」「A」这类 1 字标记）。
-pub fn flash_input_source(marker: Option<&str>) {
-    tray::flash_input_source(marker);
-}
-
-pub fn snapshot(input_sources: InputSources) -> StatusBarState {
-    platform::snapshot(input_sources)
-}
-
-pub fn glyph_state() -> GlyphState {
-    platform::glyph_state()
-}
-
-/// 电池详情页读数：只在页面打开时按需读，不进两秒一轮的图标刷新。
-pub fn battery_details() -> BatteryDetails {
-    platform::battery_details()
-}
-
-/// 「立即充满电」的当前读数（PowerUI 私有框架，只读）。
-pub fn charge_to_full_state() -> ChargeToFullState {
-    platform::charge_to_full_state()
-}
-
-/// 临时解除 macOS 的充电上限，直接充到 100%。
-pub fn charge_to_full() -> Result<(), String> {
-    platform::charge_to_full()
-}
-
-/// 取消「立即充满」：恢复发起前记下的上限，返回恢复到的档位。
-pub fn cancel_charge_to_full() -> Result<i64, String> {
-    platform::cancel_charge_to_full()
-}
-
-/// Wi-Fi 二级页读数：全信道扫描要一秒左右，只能在 worker 线程调用。
-///
-/// 正版同样只在页面打开时扫（`WiFiNetworkController.activate`），菜单栏图标那条
-/// 路径只用 `state()` 的轻量读数，两者不互相阻塞。
-pub fn wifi_scan() -> WifiScan {
-    platform::wifi_scan()
-}
-
-/// 面板打开时轮询的音量读数：只碰 CoreAudio，不走 `system_profiler`。
-///
-/// 正版靠 CoreAudio 属性监听实时跟随键盘音量键；这里用同样的语义、更便宜的
-/// 实现（面板可见时每半秒读一次），换来「按键盘上的音量键，滑条立刻跟着动」。
-pub fn audio_levels() -> AudioLevels {
-    platform::audio_levels()
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AudioLevels {
-    pub output: AudioDeviceState,
-    pub input: AudioDeviceState,
-}
-
-/// 音量提示音的系统总开关（正版读全局偏好 `com.apple.sound.beep.feedback`）。
-pub fn volume_feedback_enabled() -> bool {
-    platform::volume_feedback_enabled()
-}
-
-/// 菜单栏当前偏暗还是偏亮（彩色图标要用）；非 macOS 或读不到时 None。
-///
-/// 主线程读到的真实外观优先；还没读到时退回平台探测。
-pub fn menu_bar_dark() -> Option<bool> {
-    match MENU_BAR_DARK.load(Ordering::Relaxed) {
-        1 => Some(false),
-        2 => Some(true),
-        _ => platform::menu_bar_dark(),
-    }
-}
-
-/// 由主线程的托盘代码写入菜单栏真实外观；变化时立刻重画图标。
-pub fn set_menu_bar_dark(dark: bool) {
-    let next = if dark { 2 } else { 1 };
-    let previous = MENU_BAR_DARK.swap(next, Ordering::Relaxed);
-    if previous != next {
-        // 菜单栏颜色没有可自查的 UI：把首次读数与后续切换记下来，
-        // 「图标墨色不对」时能直接看日志判断是读数错还是配色没生效。
-        tracing::info!(dark, "菜单栏明暗已同步");
-        tray::request_refresh();
-    }
-}
-
-/// 系统强调色（`#RRGGBB`）。
-pub fn system_accent() -> String {
-    let rgb = SYSTEM_ACCENT.load(Ordering::Relaxed);
-    format!(
-        "#{:02X}{:02X}{:02X}",
-        (rgb >> 16) & 0xFF,
-        (rgb >> 8) & 0xFF,
-        rgb & 0xFF
-    )
-}
-
-pub fn set_system_accent(red: u8, green: u8, blue: u8) {
-    let rgb = (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue);
-    SYSTEM_ACCENT.store(rgb, Ordering::Relaxed);
-}
-
-/// 刷新系统强调色缓存。必须在主线程调用。
-pub fn cache_system_accent() {
-    platform::cache_system_accent()
-}
-
-/// 由读数 + 用户开关推出图标规格（纯函数，两平台与单测共用）。
-pub fn glyph_spec(state: &GlyphState, options: &glyph::GlyphOptions) -> glyph::GlyphSpec {
-    // 「自动」是正版默认：有网络读数就画网络符号，否则退回蓝牙，再否则剪贴板。
-    // 点名要某一种时，读不到也照画（用户想看到那个形状，而不是被静默换掉）。
-    let center = match options.center {
-        glyph::CenterMode::Clipboard => glyph::CenterGlyph::Clipboard,
-        glyph::CenterMode::Bluetooth => glyph::CenterGlyph::Bluetooth {
-            powered: state.bluetooth_powered,
-        },
-        glyph::CenterMode::Wifi | glyph::CenterMode::Auto => {
-            if state.network.available || options.center == glyph::CenterMode::Wifi {
-                network_center(state, options)
-            } else if state.bluetooth_available {
-                glyph::CenterGlyph::Bluetooth {
-                    powered: state.bluetooth_powered,
-                }
-            } else {
-                glyph::CenterGlyph::Clipboard
-            }
-        }
-    };
-
-    let volume =
-        if options.volume && state.audio_output.available && state.audio_output.volume_available {
-            // 静音在两种画法里都是「空」：点全暗、弧不画。
-            Some(if state.audio_output.muted {
-                0.0
-            } else {
-                state.audio_output.volume
-            })
-        } else {
-            None
-        };
-
-    let battery = (options.battery_ring && state.battery.present).then_some(state.battery.percent);
-    // 数字住在环顶缺口里，没有环就无处安放。
-    let percent_label = options.battery_percent.then_some(battery).flatten();
-
-    glyph::GlyphSpec {
-        battery,
-        charging: state.battery.charging,
-        plugged: state.battery.plugged,
-        low_power: state.battery.low_power,
-        percent_label,
-        center,
-        volume,
-        volume_style: options.volume_style,
-    }
-}
-
-/// 网络符号：热点/有线/临时/共享各有专属字形，用户逐项勾选后才退回普通 Wi-Fi 弧。
-fn network_center(state: &GlyphState, options: &glyph::GlyphOptions) -> glyph::CenterGlyph {
-    // 用户点名要 Wi-Fi 弧（center=Wifi）时不看链路类型。
-    let by_link = options.center == glyph::CenterMode::Auto;
-    let wifi = || glyph::CenterGlyph::Wifi {
-        bars: glyph::wifi_bars(state.network.rssi),
-        powered: state.network.powered,
-        connected: state.network.connected,
-    };
-    if !by_link {
-        return wifi();
-    }
-    match state.network.link.as_str() {
-        "hotspot" if !options.wifi_for_hotspot => glyph::CenterGlyph::Hotspot {
-            powered: state.network.powered,
-            connected: state.network.connected,
-        },
-        "ethernet" if !options.wifi_for_ethernet => {
-            glyph::CenterGlyph::Ethernet { connected: true }
-        }
-        "temporary" if !options.wifi_for_temporary => glyph::CenterGlyph::Temporary {
-            connected: state.network.connected,
-        },
-        "sharing" if !options.wifi_for_sharing => glyph::CenterGlyph::Shared {
-            connected: state.network.connected,
-        },
-        _ => wifi(),
-    }
-}
-
-/// 悬停提示：把图标里三区读出来的数值写成一句话。
-pub fn glyph_tooltip(state: &GlyphState, spec: &glyph::GlyphSpec) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(percent) = spec.battery {
-        let mut label = format!("电量 {percent}%");
-        if spec.charging {
-            label.push_str(" 充电中");
-        } else if spec.plugged {
-            label.push_str(" 已接电源");
-        }
-        if spec.low_power {
-            label.push_str(" · 低电量模式");
-        }
-        parts.push(label);
-    }
-    match spec.center {
-        glyph::CenterGlyph::Wifi {
-            bars,
-            powered,
-            connected,
-        } => {
-            if !powered {
-                parts.push("Wi-Fi 关闭".to_string());
-            } else if !connected {
-                parts.push("Wi-Fi 未连接".to_string());
-            } else {
-                // 互联网共享、临时连接仍画 Wi-Fi 弧，但提示里要说清是哪一种。
-                let kind = match state.network.link.as_str() {
-                    "sharing" => "互联网共享",
-                    "temporary" => "临时网络",
-                    _ => "Wi-Fi",
-                };
-                let signal = state
-                    .network
-                    .rssi
-                    .map(|rssi| format!("（{rssi}dBm）"))
-                    .unwrap_or_default();
-                parts.push(format!("{kind} {bars} 格{signal}"));
-            }
-        }
-        glyph::CenterGlyph::Hotspot { connected, .. } => parts.push(
-            if connected {
-                "iPhone 热点"
-            } else {
-                "热点未连接"
-            }
-            .to_string(),
-        ),
-        glyph::CenterGlyph::Ethernet { connected } => parts.push(
-            if connected {
-                "有线网络"
-            } else {
-                "有线未连接"
-            }
-            .to_string(),
-        ),
-        glyph::CenterGlyph::Temporary { connected } => parts.push(
-            if connected {
-                "临时网络"
-            } else {
-                "临时网络未连接"
-            }
-            .to_string(),
-        ),
-        glyph::CenterGlyph::Shared { connected } => parts.push(
-            if connected {
-                "互联网共享"
-            } else {
-                "互联网共享未连接"
-            }
-            .to_string(),
-        ),
-        glyph::CenterGlyph::Bluetooth { powered } => {
-            parts.push(if powered { "蓝牙开" } else { "蓝牙关" }.to_string())
-        }
-        glyph::CenterGlyph::Clipboard => {}
-    }
-    if let Some(steps) = spec.volume_steps() {
-        parts.push(if steps == 0 {
-            "已静音".to_string()
-        } else {
-            format!("音量 {steps}/4")
-        });
-    }
-    if parts.is_empty() {
-        return "Halo".to_string();
-    }
-    format!("Halo · {}", parts.join(" · "))
-}
-
-pub fn set_volume(scope: AudioScope, volume: f64) -> Result<(), String> {
-    platform::set_volume(scope, volume)
-}
-
-pub fn set_muted(scope: AudioScope, muted: bool) -> Result<(), String> {
-    platform::set_muted(scope, muted)
-}
-
-pub fn set_default_audio(scope: AudioScope, device_id: u32) -> Result<(), String> {
-    platform::set_default_audio(scope, device_id)
-}
-
-pub fn select_input_source(id: &str) -> Result<(), String> {
-    platform::select_input_source(id)
-}
-
-pub fn set_wifi(enabled: bool) -> Result<(), String> {
-    platform::set_wifi(enabled)
-}
-
-pub fn set_bluetooth(enabled: bool) -> Result<(), String> {
-    platform::set_bluetooth(enabled)
-}
-
-/// 申请定位权限（Wi-Fi 名称读取）。返回正版的三态结果；非 macOS 时是 no-op。
-pub fn request_location_permission() -> &'static str {
-    platform::request_location_permission()
-}
-
-/// 定位授权的当前状态（Wi-Fi 名称读取）。
-///
-/// 取值：`authorized` / `not_determined` / `denied` / `restricted`。
-/// 非 macOS 没有 Wi-Fi 名称这回事，一律按 `authorized` 报（等价于「不需要」）。
-pub fn wifi_name_access() -> &'static str {
-    platform::wifi_name_access()
-}
+pub use api::*;
+pub use spec::*;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn audio(volume: f64, muted: bool, volume_available: bool) -> AudioDeviceState {
-        AudioDeviceState {
-            available: true,
-            device_id: 1,
-            device_name: "扬声器".to_string(),
-            volume,
-            volume_available,
-            muted,
-            mute_available: true,
-            devices: Vec::new(),
-        }
-    }
-
-    fn state(battery_present: bool, wifi: bool, bluetooth: Option<bool>) -> GlyphState {
-        GlyphState {
-            battery: BatteryState {
-                present: battery_present,
-                percent: 66,
-                charging: false,
-                charged: false,
-                plugged: false,
-                low_power: false,
-                minutes_to_empty: None,
-                minutes_to_full: None,
-            },
-            network: NetworkState {
-                available: wifi,
-                powered: wifi,
-                connected: wifi,
-                ssid: wifi.then(|| "Office".to_string()),
-                rssi: wifi.then_some(-52),
-                band: wifi.then(|| "5 GHz".to_string()),
-                name_access: "authorized".to_string(),
-                interface: wifi.then(|| "en0".to_string()),
-                ipv4: wifi.then(|| "10.0.0.2".to_string()),
-                link: if wifi { "wifi" } else { "none" }.to_string(),
-            },
-            bluetooth_available: bluetooth.is_some(),
-            bluetooth_powered: bluetooth.unwrap_or(false),
-            audio_output: audio(0.6, false, true),
-        }
-    }
-
-    #[test]
-    fn audio_scope_parses_only_known_values() {
-        assert_eq!(AudioScope::parse("output"), Some(AudioScope::Output));
-        assert_eq!(AudioScope::parse("input"), Some(AudioScope::Input));
-        assert_eq!(AudioScope::parse("mic"), None);
-        assert_eq!(AudioScope::parse(""), None);
-    }
-
-    #[test]
-    fn auto_center_prefers_wifi_then_bluetooth_then_clipboard() {
-        let options = glyph::GlyphOptions::default();
-        assert_eq!(
-            glyph_spec(&state(true, true, Some(true)), &options).center,
-            glyph::CenterGlyph::Wifi {
-                bars: 3,
-                powered: true,
-                connected: true
-            }
-        );
-        assert_eq!(
-            glyph_spec(&state(true, false, Some(true)), &options).center,
-            glyph::CenterGlyph::Bluetooth { powered: true }
-        );
-        assert_eq!(
-            glyph_spec(&state(true, false, None), &options).center,
-            glyph::CenterGlyph::Clipboard
-        );
-    }
-
-    #[test]
-    fn link_type_switches_the_center_mark() {
-        let options = glyph::GlyphOptions::default();
-        let mut hotspot = state(true, true, None);
-        hotspot.network.ipv4 = Some("172.20.10.2".to_string());
-        hotspot.network.link = "hotspot".to_string();
-        assert_eq!(
-            glyph_spec(&hotspot, &options).center,
-            glyph::CenterGlyph::Hotspot {
-                powered: true,
-                connected: true
-            }
-        );
-
-        let mut wired = state(true, true, None);
-        wired.network.link = "ethernet".to_string();
-        assert_eq!(
-            glyph_spec(&wired, &options).center,
-            glyph::CenterGlyph::Ethernet { connected: true }
-        );
-
-        // 共享/临时连接同样有专用字形：实心扇形再抠掉一块。
-        let mut sharing = state(true, true, None);
-        sharing.network.link = "sharing".to_string();
-        assert_eq!(
-            glyph_spec(&sharing, &options).center,
-            glyph::CenterGlyph::Shared { connected: true }
-        );
-        let mut temporary = state(true, true, None);
-        temporary.network.link = "temporary".to_string();
-        assert_eq!(
-            glyph_spec(&temporary, &options).center,
-            glyph::CenterGlyph::Temporary { connected: true }
-        );
-
-        let wifi_arc = glyph::CenterGlyph::Wifi {
-            bars: 3,
-            powered: true,
-            connected: true,
-        };
-
-        // 「连接图标样式」按链路逐项退回 Wi-Fi 弧，勾了哪种只影响哪种。
-        let back_to_wifi = |flag: &str| {
-            let mut o = glyph::GlyphOptions::default();
-            match flag {
-                "hotspot" => o.wifi_for_hotspot = true,
-                "ethernet" => o.wifi_for_ethernet = true,
-                "temporary" => o.wifi_for_temporary = true,
-                _ => o.wifi_for_sharing = true,
-            }
-            o
-        };
-        let cases = [
-            ("hotspot", &hotspot),
-            ("ethernet", &wired),
-            ("temporary", &temporary),
-            ("sharing", &sharing),
-        ];
-        for (link, sample) in cases {
-            assert_eq!(
-                glyph_spec(sample, &back_to_wifi(link)).center,
-                wifi_arc,
-                "{link}"
-            );
-            // 别的链路不受影响。
-            for (other, other_sample) in cases.iter().filter(|(l, _)| *l != link) {
-                assert_eq!(
-                    glyph_spec(other_sample, &back_to_wifi(link)).center,
-                    glyph_spec(other_sample, &options).center,
-                    "{link} 不该动 {other}"
-                );
-            }
-        }
-
-        // 点名要 Wi-Fi 弧时不看链路类型。
-        let forced = glyph::GlyphOptions {
-            center: glyph::CenterMode::Wifi,
-            ..glyph::GlyphOptions::default()
-        };
-        assert_eq!(glyph_spec(&hotspot, &forced).center, wifi_arc);
-    }
-
-    #[test]
-    fn forced_center_ignores_hardware_availability() {
-        let options = glyph::GlyphOptions {
-            center: glyph::CenterMode::Bluetooth,
-            ..glyph::GlyphOptions::default()
-        };
-        assert_eq!(
-            glyph_spec(&state(true, true, None), &options).center,
-            glyph::CenterGlyph::Bluetooth { powered: false }
-        );
-    }
-
-    #[test]
-    fn ring_and_volume_respect_options_and_device_support() {
-        let options = glyph::GlyphOptions::default();
-        let spec = glyph_spec(&state(true, true, None), &options);
-        assert_eq!(spec.battery, Some(66));
-        assert_eq!(spec.percent_label, Some(66));
-        assert_eq!(spec.volume_steps(), Some(3));
-
-        // 台式机没有电池：不画环。
-        let mut desktop = state(false, true, None);
-        desktop.audio_output = audio(0.6, false, false);
-        let spec = glyph_spec(&desktop, &options);
-        assert_eq!(spec.battery, None);
-        assert_eq!(spec.percent_label, None);
-        assert_eq!(spec.volume, None);
-
-        // 静音：保留音量区，但一格都不亮。
-        let mut muted = state(true, true, None);
-        muted.audio_output = audio(0.6, true, true);
-        assert_eq!(glyph_spec(&muted, &options).volume_steps(), Some(0));
-
-        // 关掉开关就不画。
-        let options = glyph::GlyphOptions {
-            battery_ring: false,
-            volume: false,
-            ..glyph::GlyphOptions::default()
-        };
-        let spec = glyph_spec(&state(true, true, None), &options);
-        assert_eq!(spec.battery, None);
-        assert_eq!(spec.volume, None);
-
-        // 数字住在环顶缺口里：环关了，不许出现数字。
-        let no_label = glyph::GlyphOptions {
-            battery_percent: false,
-            ..glyph::GlyphOptions::default()
-        };
-        assert_eq!(
-            glyph_spec(&state(true, true, None), &no_label).percent_label,
-            None
-        );
-        let ring_off = glyph::GlyphOptions {
-            battery_ring: false,
-            ..glyph::GlyphOptions::default()
-        };
-        assert_eq!(
-            glyph_spec(&state(true, true, None), &ring_off).percent_label,
-            None
-        );
-    }
-
-    #[test]
-    fn tooltip_reads_out_the_drawn_regions() {
-        let options = glyph::GlyphOptions::default();
-        let sample = state(true, true, None);
-        let spec = glyph_spec(&sample, &options);
-        assert_eq!(
-            glyph_tooltip(&sample, &spec),
-            "Halo · 电量 66% · Wi-Fi 3 格（-52dBm） · 音量 3/4"
-        );
-
-        let mut off = state(true, false, Some(false));
-        off.audio_output = audio(0.6, true, true);
-        let spec = glyph_spec(&off, &options);
-        assert_eq!(
-            glyph_tooltip(&off, &spec),
-            "Halo · 电量 66% · 蓝牙关 · 已静音"
-        );
-
-        // 热点与有线：提示里必须点出链路类型，不能一律说 Wi-Fi。
-        let mut hotspot = state(true, true, None);
-        hotspot.network.link = "hotspot".to_string();
-        let spec = glyph_spec(&hotspot, &options);
-        assert_eq!(
-            glyph_tooltip(&hotspot, &spec),
-            "Halo · 电量 66% · iPhone 热点 · 音量 3/4"
-        );
-
-        // 互联网共享现在是实心扇形抠箭头，提示也跟着换名字。
-        let mut sharing = state(true, true, None);
-        sharing.network.link = "sharing".to_string();
-        let spec = glyph_spec(&sharing, &options);
-        assert_eq!(
-            glyph_tooltip(&sharing, &spec),
-            "Halo · 电量 66% · 互联网共享 · 音量 3/4"
-        );
-        let forced_wifi = glyph::GlyphOptions {
-            center: glyph::CenterMode::Wifi,
-            ..glyph::GlyphOptions::default()
-        };
-        assert_eq!(
-            glyph_tooltip(&sharing, &glyph_spec(&sharing, &forced_wifi)),
-            "Halo · 电量 66% · 互联网共享 3 格（-52dBm） · 音量 3/4"
-        );
-    }
-}
+mod tests;

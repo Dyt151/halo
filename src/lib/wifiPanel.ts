@@ -4,6 +4,9 @@
  *
  * 放在 lib 里是为了能离线断言：分组成哪几节、哪条排前面、折叠态露出几行、
  * 无权限时该说哪句话——这些都会直接决定和正版像不像。
+ *
+ * 正版是 Swift/AppKit（Status Trio，Apache-2.0），这里逐条对齐它的判定与文案：
+ * 数值阈值取自 `StatusMappings.wifiBars`，中文取自 `Resources/zh-Hans.lproj/Localizable.strings`。
  */
 import type {
   StatusBarWifiCandidate,
@@ -62,6 +65,19 @@ export function requiresPassword(security: WifiSecurity): boolean {
   );
 }
 
+/**
+ * 正版 `WiFiNetworkPresentation.action(for:)`：除了当前连接那一行，其余每行都
+ * 只是「去系统 Wi-Fi 面板」。
+ *
+ * 正版从来自己加入网络——源码里没有 `join`，也没有 `networksetup -setairportnetwork`。
+ * 自己连就必然要猜密码：钥匙串里没有、密码改过、企业网要走 802.1X，这几种情况在
+ * 面板里都只能表现为「点了没反应」或「已知网络还让我输一遍」。系统的 Wi-Fi 面板
+ * 有这些凭据的正规入口，所以把这一件事交回去。
+ */
+export function wifiRowAction(network: WifiNetwork): "none" | "open_settings" {
+  return network.isConnected ? "none" : "open_settings";
+}
+
 /** 正版 `LinkDetailPresentation.securityName`：多数安全类型是协议名，不翻译。 */
 export function securityName(security: WifiSecurity): string {
   switch (security) {
@@ -94,10 +110,10 @@ export function securityName(security: WifiSecurity): string {
   }
 }
 
-/** 正版 `StatusMappings.wifiBars`：只有 4 档（含 0）。 */
+/** 正版 `StatusMappings.wifiBars`：只有 4 档（含 0），-70 起算满格。 */
 export function wifiBars(rssi: number | null): number {
   if (rssi === null) return 0;
-  if (rssi >= -60) return 3;
+  if (rssi >= -70) return 3;
   if (rssi >= -78) return 2;
   if (rssi >= -88) return 1;
   return 0;
@@ -285,17 +301,17 @@ export function wifiMessage(
       return { text: "Wi-Fi 已关闭。", intent: "none" };
     case "failed":
       if (access === "not_determined") {
-        return { text: "允许定位以显示 Wi-Fi 名称", intent: "request_name_access" };
+        return { text: "允许定位以显示 Wi-Fi 网络", intent: "request_name_access" };
       }
       return { text: "无法扫描 Wi-Fi 网络。", intent: "none" };
     case "ready":
       if (access === "not_determined" && !hasVisibleNetworks) {
-        return { text: "允许定位以显示 Wi-Fi 名称", intent: "request_name_access" };
+        return { text: "允许定位以显示 Wi-Fi 网络", intent: "request_name_access" };
       }
       if (!hasVisibleNetworks && access !== "authorized") {
         return access === "denied" || access === "restricted"
           ? { text: "需要定位权限才能读取 Wi-Fi 名称和扫描结果。前往定位服务设置。", intent: "location_settings" }
-          : { text: "允许定位以显示 Wi-Fi 名称", intent: "request_name_access" };
+          : { text: "允许定位以显示 Wi-Fi 网络", intent: "request_name_access" };
       }
       if (!hasVisibleNetworks) return { text: "未发现附近网络。", intent: "none" };
       return null;

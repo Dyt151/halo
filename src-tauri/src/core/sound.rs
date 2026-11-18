@@ -1,39 +1,81 @@
-//! 系统提示音播放：复制入库 / 粘贴成功时按 `sound_enabled` 触发。
+//! 复制 / 粘贴提示音与音量调节反馈音。
+//!
+//! 音效随应用打包，不用系统自带音效——Tink 之类在系统各处都在响，
+//! 听不出是剪贴板动作；且 macOS 26 起固定的音效 ID 已不发声，必须加载文件。
 
-/// 播放系统提示音。
-///
-/// macOS 用 AudioToolbox 的 C 函数 `AudioServicesPlaySystemSound(1104)`
-/// 播放系统音效 **Tink**（清脆短促的「叮」，iCopy 等剪贴板工具同款选择，
-/// 由系统「声音」偏好设置统一控制音量）。
-///
-/// 为什么不用其它方案（都有坑，逐一试过）：
-/// - `msg_send![class!(NSSound), beep]`：ObjC 消息在非主线程抛 foreign
-///   exception 直接 abort 整个进程（监控线程即因此死过一次）；
-/// - `NSBeep()`：虽线程安全，但播的是刺耳的警报声，不符合剪贴板工具的听感；
-/// - `AudioServicesPlaySystemSound` 是纯 C API，任意线程可安全调用。
-///
-/// 其余平台当前为 no-op。
+#[cfg(target_os = "macos")]
+const COPY_SOUND: &[u8] = include_bytes!("../../assets/copy.wav");
+/// 音量每变化一步的短促反馈音（40ms）。
+#[cfg(target_os = "macos")]
+const VOLUME_TICK: &[u8] = include_bytes!("../../assets/volume.wav");
+
+/// 播放复制 / 粘贴提示音（macOS 有效，其余平台 no-op）。
 pub fn play_system_sound() {
     #[cfg(target_os = "macos")]
-    play_macos_sound();
-    #[cfg(not(target_os = "macos"))]
     {
-        // no-op
+        static SOUND_ID: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+        let Some(id) = *SOUND_ID.get_or_init(|| load_sound(COPY_SOUND, "sound-copy.wav")) else {
+            return;
+        };
+        play_id(id);
+    }
+}
+
+/// 播放音量步进反馈音（macOS 有效，其余平台 no-op）。
+pub fn play_volume_tick() {
+    #[cfg(target_os = "macos")]
+    {
+        static SOUND_ID: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+        let Some(id) = *SOUND_ID.get_or_init(|| load_sound(VOLUME_TICK, "sound-volume.wav")) else {
+            return;
+        };
+        play_id(id);
     }
 }
 
 #[cfg(target_os = "macos")]
-fn play_macos_sound() {
-    /// 系统音效 ID：1104 = Tink（macOS 固定映射，/System/Library/Sounds/Tink.aiff）。
-    const SOUND_ID_TINK: u32 = 1104;
+fn play_id(id: u32) {
+    #[link(name = "AudioToolbox", kind = "framework")]
+    unsafe extern "C" {
+        fn AudioServicesPlaySystemSound(in_system_sound_id: u32);
+    }
+
+    // 纯 C API，内部走系统音效服务，任意线程可安全调用。
+    unsafe {
+        AudioServicesPlaySystemSound(id);
+    }
+}
+
+/// 把内置音效落到数据目录并创建 system sound ID。
+///
+/// 内置 wav 每进程重写一次，保证升级应用后不会播放旧音效；失败时退回系统 Tink。
+#[cfg(target_os = "macos")]
+fn load_sound(bytes: &[u8], file_name: &str) -> Option<u32> {
+    let dir = crate::storage::data_dir();
+    let path = dir.join(file_name);
+    if std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&path, bytes).is_ok() {
+        if let Some(id) = create_sound_id(&path) {
+            return Some(id);
+        }
+    }
+    create_sound_id(std::path::Path::new("/System/Library/Sounds/Tink.aiff"))
+}
+
+#[cfg(target_os = "macos")]
+fn create_sound_id(path: &std::path::Path) -> Option<u32> {
+    use core_foundation::base::TCFType;
 
     #[link(name = "AudioToolbox", kind = "framework")]
     unsafe extern "C" {
-        fn AudioServicesPlaySystemSound(inSystemSoundID: u32);
+        fn AudioServicesCreateSystemSoundID(
+            in_file_url: *const std::ffi::c_void,
+            out_system_sound_id: *mut u32,
+        ) -> i32;
     }
 
-    // 该函数为异步派发（内部走系统音效服务），文档保证任意线程可调用。
-    unsafe {
-        AudioServicesPlaySystemSound(SOUND_ID_TINK);
-    }
+    let url = core_foundation::url::CFURL::from_path(path, false)?;
+    let mut id: u32 = 0;
+    let status =
+        unsafe { AudioServicesCreateSystemSoundID(url.as_concrete_TypeRef() as *const _, &mut id) };
+    (status == 0 && id != 0).then_some(id)
 }

@@ -3,6 +3,8 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { toApiError } from "./errors";
 import type {
+  AutoSwitchConfig,
+  AutoSwitchState,
   ClipContent,
   ClipItem,
   Config,
@@ -29,6 +31,12 @@ import type {
   StatusBarChargeToFullState,
   StatusBarAudioLevels,
   StatusBarWifiScan,
+  StatusBarProxyPage,
+  StatusBarProxySpeed,
+  StatusBarProxyNode,
+  StatusBarProxyOutcome,
+  ProxyMode,
+  SayAllState,
   SystemPane,
   AudioScope,
 } from "./types";
@@ -54,11 +62,21 @@ export interface HotkeyCheck {
 
 /** 单个快捷键槽位的真实注册结果（对应 Rust `HotkeySlotResult`）。 */
 export interface HotkeySlotResult {
-  /** 全局槽位之一：`toggle` / `stack_paste`。 */
+  /** 全局槽位之一：`toggle` / `stack_paste` / `voice_cmd`。 */
   slot: string;
   accelerator: string;
   ok: boolean;
   message: string | null;
+}
+
+/** 语音指令的执行结果（对应 Rust `commands::VoiceCmdResult`）。 */
+export interface VoiceCmdResult {
+  outcome: { ok: boolean; kind: string; detail: string };
+  /**
+   * 后端执行失败时为真：指令条要留在屏幕上并显示 `detail`。
+   * 语音转写经常差一个字，「没找到叫 X 的 App」比一闪而过有用。
+   */
+  keep_open: boolean;
 }
 
 /**
@@ -132,7 +150,8 @@ export const api = {
   pickDirectory: () => invoke<string[]>("pick_directory"),
   /** 辅助功能是否已授权（回贴需要，未授权时降级为仅复制）。 */
   accessibilityStatus: () => invoke<boolean>("accessibility_status"),
-  /** 主动请求辅助功能授权：系统弹窗并把 Halo 加进白名单（只由按钮调用）。 */
+  /** 系统「降低透明度」是否开启（`NSWorkspace` 读数，CSS 媒体查询的兜底）。 */
+  reduceTransparency: () => invoke<boolean>("reduce_transparency"),  /** 主动请求辅助功能授权：系统弹窗并把 Halo 加进白名单（只由按钮调用）。 */
   requestAccessibility: () => invoke<boolean>("request_accessibility"),
   /** 环形手势现场状态：开关/授权/监听/前台条件 + 最近一次没反应的原因。 */
   ringGestureStatus: () => invoke<GestureStatus>("ring_gesture_status"),
@@ -220,6 +239,9 @@ export const api = {
     invoke<void>("statusbar_set_default_device", { scope, deviceId }),
   statusBarSelectInputSource: (id: string) =>
     invoke<void>("statusbar_select_input_source", { id }),
+  /** 打开输入法自带的设置 App（微信输入法 → WeTypeSettings.app）。 */
+  statusBarOpenImeSettings: (path: string) =>
+    invoke<void>("statusbar_open_ime_settings", { path }),
   statusBarSetWifi: (enabled: boolean) => invoke<void>("statusbar_set_wifi", { enabled }),
   statusBarSetBluetooth: (enabled: boolean) =>
     invoke<void>("statusbar_set_bluetooth", { enabled }),
@@ -245,6 +267,35 @@ export const api = {
     invoke<number>("statusbar_cancel_charge_to_full"),
   /** Wi‑Fi 二级页读数：含一次全信道扫描（一秒上下），只在打开页面/点刷新时调。 */
   statusBarWifiPage: () => invoke<StatusBarWifiScan>("statusbar_wifi_page"),
+  /**
+   * 代理（VPN）二级页读数：读 FlClash 配置 + 探测控制口 + 回读系统代理三项。
+   * 起几个短命子进程，只在打开页面和点刷新时调，不进两秒一轮的网速轮询。
+   */
+  statusBarProxyPage: () => invoke<StatusBarProxyPage>("statusbar_proxy_page"),
+  /** 代理页可见时的网速：一次控制口请求，或一次 `netstat` 计数差分。 */
+  statusBarProxySpeed: () => invoke<StatusBarProxySpeed>("statusbar_proxy_speed"),
+  /** 流量接管：只改 macOS 系统代理三项，不动路由和 DNS。失败原因在 message 里。 */
+  statusBarProxySetTakeover: (enabled: boolean) =>
+    invoke<StatusBarProxyOutcome>("statusbar_proxy_set_takeover", { enabled }),
+  statusBarProxySetMode: (mode: ProxyMode) =>
+    invoke<StatusBarProxyOutcome>("statusbar_proxy_set_mode", { mode }),
+  statusBarProxySelectNode: (group: string, node: string) =>
+    invoke<StatusBarProxyOutcome>("statusbar_proxy_select_node", { group, node }),
+  /** 测一个组里全部节点的延迟：最坏十几秒，期间页面显示转圈。 */
+  statusBarProxyLatency: (group: string) =>
+    invoke<StatusBarProxyNode[]>("statusbar_proxy_latency", { group }),
+  /** 把 FlClash 带到前台（核心没启动、或要改订阅时由用户自己操作）。 */
+  statusBarProxyOpenApp: () =>
+    invoke<StatusBarProxyOutcome>("statusbar_proxy_open_app"),
+  /** 自动换节点卡片读数：配置 + 后端 + 当前节点 + 最近测速/切换 + 日志。 */
+  statusBarAutoSwitchState: () => invoke<AutoSwitchState>("statusbar_autoswitch_state"),
+  statusBarAutoSwitchSetConfig: (config: AutoSwitchConfig) =>
+    invoke<StatusBarProxyOutcome>("statusbar_autoswitch_set_config", { config }),
+  /** 路由器 OpenClash API 密钥存进钥匙串（不落明文配置）。 */
+  statusBarAutoSwitchSetRouterSecret: (secret: string) =>
+    invoke<StatusBarProxyOutcome>("statusbar_autoswitch_set_router_secret", { secret }),
+  /** 立即跑一轮巡检测速（不等周期），返回最新读数。 */
+  statusBarAutoSwitchCheckNow: () => invoke<AutoSwitchState>("statusbar_autoswitch_check_now"),
   /** 面板可见时的轻量音量读数：让滑条跟随键盘/触控栏音量键。 */
   statusBarAudioLevels: () => invoke<StatusBarAudioLevels>("statusbar_audio_levels"),
   /** 音量提示音的系统总开关（`com.apple.sound.beep.feedback`，缺省即开）。 */
@@ -257,4 +308,22 @@ export const api = {
   statusBarOpenSettings: () => invoke<void>("statusbar_open_settings"),
   /** 前端按实际内容高度回报，窗口据此重新贴到图标下方。 */
   statusBarResize: (height: number) => invoke<void>("statusbar_resize", { height }),
+
+  // ---------- 无线麦 SayAll（第三方 App，Halo 只做入口） ----------
+  /** 装没装、在不在跑、它自己的菜单栏图标开关。 */
+  sayAllState: () => invoke<SayAllState>("sayall_state"),
+  /** 进到 SayAll：没跑就启动，在跑就把它自己的窗口带到前台。 */
+  sayAllOpen: () => invoke<SayAllState>("sayall_open"),
+  /** 退出 SayAll；它的菜单栏图标只有在这之后才会消失（低版本没有隐藏开关）。 */
+  sayAllQuit: () => invoke<SayAllState>("sayall_quit"),
+  /** 改它的「菜单栏显示图标」；它只认启动时的值，在跑时这一改会重启它。 */
+  sayAllSetStatusBar: (visible: boolean) =>
+    invoke<SayAllState>("sayall_set_status_bar", { visible }),
+
+  // ---------- 语音指令条（听写落在 Halo 的输入框里，解释与执行都在后端） ----------
+  /** 把听写到的一句话交给后端解释并执行。 */
+  voiceCmdExecute: (text: string) =>
+    invoke<VoiceCmdResult>("voice_cmd_execute", { text }),
+  /** 收起指令条（Esc 与点空白处走这里）。 */
+  voiceCmdHide: () => invoke<void>("voice_cmd_hide"),
 };

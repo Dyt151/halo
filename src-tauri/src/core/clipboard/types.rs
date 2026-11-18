@@ -149,7 +149,13 @@ pub struct ClipItem {
 pub struct ClipEvent {
     pub content: ClipContent,
     pub source_app: Option<String>,
+    /// 内容来自另一台 Apple 设备的通用剪贴板（接力）。
+    #[serde(default)]
+    pub remote: bool,
 }
+
+/// 通用剪贴板的来源展示名：跨设备复制时 Mac 的前台 App 不是真正的来源。
+pub const REMOTE_CLIPBOARD_SOURCE: &str = "通用剪贴板";
 
 /// 历史查询条件。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

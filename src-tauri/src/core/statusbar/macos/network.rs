@@ -14,7 +14,7 @@
 use std::ffi::{c_void, CStr};
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use objc2::msg_send;
 use objc2::runtime::{AnyClass, AnyObject, Bool};
@@ -23,6 +23,7 @@ use objc2_foundation::NSAutoreleasePool;
 use super::super::cf;
 use super::super::{WifiCandidate, WifiDetails, WifiScan};
 use crate::core::statusbar::NetworkState;
+use crate::lock_ext::LockExt;
 
 static COREWLAN_LOADED: OnceLock<bool> = OnceLock::new();
 static CORELOCATION_LOADED: OnceLock<bool> = OnceLock::new();
@@ -224,6 +225,61 @@ unsafe fn band(iface: *mut AnyObject) -> Option<String> {
     )
 }
 
+/// 正版对 `rssiValue()` 抖动的桥（issue #110）：无线电偶尔返回 0，而链路其实还连着。
+///
+/// 规则照抄：有效读数记下来，无效时最多沿用 30 秒且不续期；关联一换（连上、漫游、
+/// 断开、关掉无线电）立刻丢弃，否则就会拿上一个网络的强度画现在这一行。
+const RSSI_HOLD: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// (关联标识, 上次有效 dBm, 记录时刻)。正版还会用链路质量事件填这个缓存，
+/// Halo 不订阅 CoreWLAN 事件，所以只由读数本身填充。
+static RSSI_HOLD_STATE: OnceLock<Mutex<Option<(String, i32, std::time::Instant)>>> = OnceLock::new();
+
+fn rssi_hold() -> std::sync::MutexGuard<'static, Option<(String, i32, std::time::Instant)>> {
+    RSSI_HOLD_STATE.get_or_init(|| Mutex::new(None)).lock_ok()
+}
+
+/// `raw` 是 `rssiValue()` 的原值（只有负数算有效），`association` 标识当前关联的网络。
+/// 纯函数：缓存与时间都由参数进来，可离线断言。
+fn bridge_rssi(
+    raw: isize,
+    connected: bool,
+    association: &str,
+    now: std::time::Instant,
+    slot: &mut Option<(String, i32, std::time::Instant)>,
+) -> Option<i32> {
+    if !connected {
+        *slot = None;
+        return None;
+    }
+    if raw < 0 {
+        let value = raw as i32;
+        *slot = Some((association.to_string(), value, now));
+        return Some(value);
+    }
+    let reusable = match slot.as_ref() {
+        Some((held, value, since))
+            if held == association
+                && now.checked_duration_since(*since)
+                    .is_some_and(|age| age < RSSI_HOLD) =>
+        {
+            Some(*value)
+        }
+        _ => None,
+    };
+    if reusable.is_none() {
+        *slot = None;
+    }
+    reusable
+}
+
+/// 取一次关联 RSSI：把上面的纯函数接到进程级缓存上。
+fn associated_rssi(raw: isize, connected: bool, association: &str) -> Option<i32> {
+    let now = std::time::Instant::now();
+    let mut slot = rssi_hold();
+    bridge_rssi(raw, connected, association, now, &mut slot)
+}
+
 pub fn state() -> NetworkState {
     // CWWiFiClient 返回的是 autoreleased 对象：命令线程没有池，必须自建。
     let _pool = unsafe { NSAutoreleasePool::new() };
@@ -257,12 +313,16 @@ pub fn state() -> NetworkState {
             None => ("none", None),
         };
 
+        // 关联标识：接口 + SSID（两处读数都用它当键，未授权时 SSID 为空也一致）。
+        let association = format!("{}|{}", interface.as_deref().unwrap_or(""), ssid.as_deref().unwrap_or(""));
+        let held_rssi = associated_rssi(rssi, connected, &association);
+
         NetworkState {
             available: true,
             powered,
             connected,
             ssid: if connected { ssid } else { None },
-            rssi: (connected && rssi < 0).then_some(rssi as i32),
+            rssi: held_rssi,
             band: (connected && matches!(link, "wifi" | "hotspot"))
                 .then(|| band)
                 .flatten(),
@@ -783,7 +843,7 @@ pub fn request_name_permission() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_ipv4, classify_link};
+    use super::{bridge_rssi, choose_ipv4, classify_link, RSSI_HOLD};
 
     fn addrs(pairs: &[(&str, &str, u8)]) -> Vec<(String, String, u8)> {
         pairs
@@ -838,5 +898,40 @@ mod tests {
             "temporary"
         );
         assert_eq!(classify_link(false, "10.0.0.5", 24, None), "ethernet");
+    }
+
+    #[test]
+    fn a_bad_rssi_reading_reuses_the_last_good_one_for_thirty_seconds() {
+        let t0 = std::time::Instant::now();
+        let mut slot = None;
+        assert_eq!(bridge_rssi(-58, true, "en0|Home", t0, &mut slot), Some(-58));
+        assert_eq!(
+            bridge_rssi(0, true, "en0|Home", t0 + std::time::Duration::from_secs(10), &mut slot),
+            Some(-58)
+        );
+        // 沿用不续期：第一次有效读数起算满 30 秒后就当读不到。
+        assert_eq!(
+            bridge_rssi(0, true, "en0|Home", t0 + RSSI_HOLD, &mut slot),
+            None
+        );
+        assert!(slot.is_none(), "过期后缓存要清掉，不能一直留着");
+    }
+
+    #[test]
+    fn a_different_association_never_shows_the_previous_networks_signal() {
+        let t0 = std::time::Instant::now();
+        let mut slot = None;
+        assert_eq!(bridge_rssi(-70, true, "en0|Home", t0, &mut slot), Some(-70));
+        assert_eq!(bridge_rssi(0, true, "en0|Cafe", t0, &mut slot), None);
+        assert!(slot.is_none());
+    }
+
+    #[test]
+    fn leaving_the_network_drops_the_held_reading() {
+        let t0 = std::time::Instant::now();
+        let mut slot = None;
+        bridge_rssi(-66, true, "en0|Home", t0, &mut slot);
+        assert_eq!(bridge_rssi(0, false, "en0|Home", t0, &mut slot), None);
+        assert!(slot.is_none());
     }
 }

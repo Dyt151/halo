@@ -30,7 +30,7 @@ interface Props {
   onModuleAction: (moduleId: string, clip: ClipItemType) => void;
 }
 
-/** 菜单与屏幕边缘的最小间距（规范 §9.7）。 */
+/** 菜单与屏幕边缘的最小间距（Apple HIG）。 */
 const EDGE_MARGIN = 8;
 
 /** 复选标记：13px checkmark，琥珀色（替代旧的 ✓ 文字符号）。 */
@@ -167,7 +167,7 @@ export default function ClipContextMenu({
       <div
         ref={ref}
         className="menu absolute animate-pop-in"
-        // 不能在这里加 max-height + overflow：标签子菜单要飞出父级边界（§9.7），
+        // 不能在这里加 max-height + overflow：标签子菜单要飞出父级边界（Apple HIG），
         // 一旦父级变成滚动容器就会被裁掉。超高时靠 useLayoutEffect 的边界钳制兜底。
         style={{ left: pos.left, top: pos.top }}
         onClick={(e) => e.stopPropagation()}

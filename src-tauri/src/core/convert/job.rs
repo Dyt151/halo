@@ -1,6 +1,6 @@
 //! 转换任务（Job）：文件快照 + 配方快照 + 逐文件结果 + 取消 + 单调进度。
 //!
-//! 对照 docs/REA-Filee-Conversion.md §3 / §8.2 / §8.5：
+//! 对照 README「三、环形文件转换」：
 //! - 每个输入都有一条 `ConversionFileResult`，**禁止静默忽略**（`_ => {}` 不许再出现）；
 //! - 跳过与失败是两种状态，跳过还带结构化原因（空文件 / 格式不认识 / 已是目标 / 无路由 / 冲突跳过）；
 //! - 进度按「步」单调推进，不用「已完成文件数 / 总数」冒充单文件进度；
@@ -76,7 +76,7 @@ impl SkipReason {
     }
 }
 
-/// 逐文件结果（§8.2 的 `ConversionFileResult`）。
+/// 逐文件结果（Filee 行为 的 `ConversionFileResult`）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ConversionFileResult {
     pub source: String,
@@ -153,7 +153,7 @@ impl CancelToken {
     }
 }
 
-/// 一个转换任务。`preset` 是启动时的快照，之后改配置不影响它（§2.2）。
+/// 一个转换任务。`preset` 是启动时的快照，之后改配置不影响它（Filee 行为）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ConversionJob {
     pub id: String,
@@ -198,19 +198,6 @@ impl ConversionJob {
         self.files
             .iter()
             .flat_map(|f| f.outputs.iter().cloned())
-            .collect()
-    }
-
-    /// 全部失败 / 跳过的可读原因。
-    pub fn reasons(&self) -> Vec<String> {
-        self.files
-            .iter()
-            .filter_map(|f| {
-                f.error
-                    .as_ref()
-                    .map(|e| e.message.clone())
-                    .or_else(|| f.skip.as_ref().map(|s| s.detail.clone()))
-            })
             .collect()
     }
 }
@@ -458,7 +445,7 @@ pub fn run_with_cancel(
     job
 }
 
-/// 单个文件的完整流水线：Detect → Plan → Execute → Finalize（§3.1）。
+/// 单个文件的完整流水线：Detect → Plan → Execute → Finalize（Filee 行为）。
 fn convert_one(
     index: usize,
     source: &str,
@@ -621,7 +608,7 @@ fn convert_one(
             }
         }
 
-        // 进度按步推进，只会变大（§3.3 单调）。
+        // 进度按步推进，只会变大（Filee 行为 单调）。
         let progressed = (step_index + 1) as f32 / step_count as f32;
         result.progress = result.progress.max(progressed);
         input = output;
@@ -673,7 +660,7 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// 判断一批文件在某个预设下是否可用（§2.5 的 `PresetAvailability`）。
+/// 判断一批文件在某个预设下是否可用（Filee 行为 的 `PresetAvailability`）。
 ///
 /// 规则：至少一个文件可执行即可用；同格式是否可执行由路由图回答，
 /// 不在这里猜。返回 (可执行数, 跳过数, 首个不可用原因)。

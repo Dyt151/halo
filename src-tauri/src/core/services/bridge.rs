@@ -5,8 +5,8 @@
 //! 唤醒主程序。主程序每 250ms 扫一遍候选目录，取走请求并执行。
 //!
 //! 为什么不用 NSServices：NSServices 只能出现在「服务」子菜单，桌面空白处
-//! 也没有菜单入口；Finder Sync 扩展负责 Finder 窗口内的右键，桌面（空白处
-//! 与图标）由主程序的 `desktop_menu` 接管。
+//! 也没有菜单入口；Finder 窗口与桌面的右键都由 Finder Sync 扩展注入条目，
+//! 桌面本身的其余菜单保持系统原生。
 //!
 //! 为什么用文件队列而不是 XPC：主程序不是 launchd 常驻服务，没有稳定的
 //! Mach service；文件队列在 App 未运行时也不会丢请求，启动后补执行即可。
@@ -56,8 +56,7 @@ pub fn start(_app: AppHandle) {
     std::thread::Builder::new()
         .name("finder-extension-boot".into())
         .spawn(|| {
-            let enabled = register_and_verify();
-            crate::core::desktop_menu::set_enabled(enabled);
+            register_and_verify();
         })
         .ok();
 
@@ -109,10 +108,6 @@ pub fn set_enabled(enabled: bool) -> Result<FinderIntegrationStatus, String> {
             format!("pluginkit -e {action} 失败：{stderr}")
         });
     }
-
-    // 桌面（空白处和图标）的右键由主程序接管，也跟随这个开关，
-    // 用户只需要理解一个「Finder 右键菜单」。
-    crate::core::desktop_menu::set_enabled(enabled);
 
     Ok(status())
 }

@@ -1,10 +1,5 @@
 //! Tauri 应用入口：注册插件/命令/状态/托盘，启动核心服务。
 
-// 架构冻结了扩展框架/同步层等公共 API（如 ModuleMessage、MessageBus::subscribe、
-// schema 常量等），其中部分接口在 P0 运行时路径中尚未全部接线（留待后续模块市场/
-// WASM 运行时等）。为避免噪音，允许这些「为未来保留」的公共项暂未使用。
-#![allow(dead_code)]
-
 // 说明：以下模块对 `halo_import` 命令行工具开放 pub 可见性，
 // 以便迁移工具复用与 App 完全一致的历史/回复写入逻辑。
 pub mod alert;
@@ -41,15 +36,19 @@ use crate::modules::{CapabilityGate, MessageBus, ModuleHost};
 use crate::state::AppState;
 use crate::sync::SyncManager;
 
-/// 全局快捷键处理器：按配置分发动作（唤起/堆栈/数字粘贴）。
+/// 全局快捷键处理器：按配置分发动作（唤起面板/语音指令条/堆栈粘贴）。
 fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
     if event.state != ShortcutState::Pressed {
         return;
     }
     let state = app.state::<AppState>();
     let config = state.config.get();
-    match resolve_action(&config, shortcut) {
+    let action = resolve_action(&config, shortcut);
+    // 遥控器那一下到底有没有进到 Halo，只有这一行能证明；排查时不必再靠猜。
+    tracing::info!("全局快捷键触发：{action:?}");
+    match action {
         Some(HotkeyAction::Toggle) => window::toggle_panel_window(app),
+        Some(HotkeyAction::VoiceCmd) => window::toggle_voice_cmd(app),
         Some(HotkeyAction::StackPaste) => {
             // 快捷键不经过面板，此刻前台仍是用户正在用的 App，先记下它（评审 S4）。
             window::remember_frontmost_app();
@@ -232,6 +231,7 @@ pub fn run() {
             commands::patch_config,
             commands::open_system_settings,
             commands::accessibility_status,
+            commands::reduce_transparency,
             commands::request_accessibility,
             commands::apply_hotkeys,
             commands::validate_hotkey,
@@ -282,6 +282,11 @@ pub fn run() {
             commands::statusbar_set_mute,
             commands::statusbar_set_default_device,
             commands::statusbar_select_input_source,
+            commands::statusbar_open_ime_settings,
+            commands::sayall_state,
+            commands::sayall_open,
+            commands::sayall_quit,
+            commands::sayall_set_status_bar,
             commands::statusbar_set_wifi,
             commands::statusbar_set_bluetooth,
             commands::statusbar_request_location,
@@ -291,12 +296,25 @@ pub fn run() {
             commands::statusbar_charge_to_full,
             commands::statusbar_cancel_charge_to_full,
             commands::statusbar_wifi_page,
+            commands::statusbar_proxy_page,
+            commands::statusbar_proxy_speed,
+            commands::statusbar_proxy_set_takeover,
+            commands::statusbar_proxy_set_mode,
+            commands::statusbar_proxy_select_node,
+            commands::statusbar_proxy_latency,
+            commands::statusbar_proxy_open_app,
+            commands::statusbar_autoswitch_state,
+            commands::statusbar_autoswitch_set_config,
+            commands::statusbar_autoswitch_set_router_secret,
+            commands::statusbar_autoswitch_check_now,
             commands::statusbar_audio_levels,
             commands::statusbar_volume_feedback_enabled,
             commands::statusbar_open_pane,
             commands::statusbar_hide,
             commands::statusbar_open_settings,
             commands::statusbar_resize,
+            commands::voice_cmd_execute,
+            commands::voice_cmd_hide,
         ])
         .setup(move |app| {
             // Dock 里不留图标。Info.plist 里的 LSUIElement 只对 LaunchServices 的
@@ -397,6 +415,9 @@ pub fn run() {
 
             sync.start(cfg.sync.interval_secs);
 
+            // 键盘音量键 / 控制中心改音量时的逐步提示音。
+            crate::core::statusbar::start_volume_feedback_watcher();
+
             // 真实毛玻璃：把 NSVisualEffectView 垫到 webview 之下（评审 M3）。
             // 面板用 HUD 材质（Spotlight 同款），管理窗口用侧边栏材质；
             // 圆角同时交给这层 view，窗口阴影才不会露出直角（评审 M6）。
@@ -420,16 +441,43 @@ pub fn run() {
                 crate::window::allow_over_fullscreen(&ring);
             }
             // 状态栏面板：与剪贴板面板同一套 HUD 材质与圆角，只是更窄。
+            // 宿主也要配——全屏浏览器里点菜单栏图标时，它得能进那个 Space。
             if let Some(tray) = app.get_webview_window("traypanel") {
                 crate::window::apply_material(&tray, window::panel_material(), 12.0);
                 crate::window::allow_over_fullscreen(&tray);
+                crate::window::prepare_panel_host(&tray);
             }
+            // 语音指令条：能被听写的输入框，必须和剪贴板面板一样能进别人的全屏 Space。
+            if let Some(bar) = app.get_webview_window("cmdbar") {
+                crate::window::apply_material(&bar, window::panel_material(), 12.0);
+                crate::window::allow_over_fullscreen(&bar);
+                crate::window::prepare_panel_host(&bar);
+            }
+            // App 索引先在后台热一遍：第一次说「打开 X」时扫描要读几百个 Info.plist，
+            // 而那条命令跑在主线程，现场扫会让整个 App 卡住半秒。
+            std::thread::spawn(|| {
+                let _ = core::appindex::installed();
+            });
             // 环形盘不垫材质：窗口里只该有扇区本身，垫了会多出一块灰色圆角底板。
+
+            // 原生外观要与应用内主题同向：强制浅色/深色时窗口外观跟着变，
+            // 毛玻璃、滚动条与系统控件才不会和 webview 内容一深一浅。
+            crate::window::sync_theme(&app_handle, &cfg.theme);
+            // 「降低透明度」变化时通知前端换实色表面（CSS 媒体查询的兜底）。
+            crate::window::watch_display_preferences(app_handle.clone());
 
             // 菜单栏图标：左键开合状态栏面板，右键菜单直达关于 / 设置 / 退出。
             // 图标是按系统状态现画的三区模板图，之后由重画循环持续更新。
             create_tray_icon(app, &cfg)?;
             core::statusbar::tray::start(app_handle.clone(), config.clone());
+            // 接管状态的观察线程：只在「已接管」时确认那个端口还在监听。核心自己退出后，
+            // 菜单栏提示会转成「代理已失效」，不用等用户打开面板才发现网是不通的。
+            // 没开 VPN 模块就别起——种子读数要问 networksetup，不该为看不见的功能花。
+            if cfg.statusbar.sections.iter().any(|id| id == "vpn") {
+                core::statusbar::start_proxy_watcher();
+            }
+            // 自动换节点巡检：配置关闭时线程空转，开着才测速。
+            core::statusbar::start_autoswitch_worker();
 
             // 输入法切换提示：订阅系统的分布式通知。setup 正在主线程，正好是
             // CoreFoundation 通知回调与 TIS 读数唯一可用的线程。
@@ -439,11 +487,6 @@ pub fn run() {
             // 「服务」子菜单）。这里注册扩展并开始轮询扩展投递的动作请求。
             // 扩展未启用时轮询空转，不影响启动；主窗口仍保持静默。
             crate::core::services::start_extension_bridge(&app_handle);
-
-            // 桌面空白处 Finder Sync 不会注入菜单，由主程序用 CGEventTap 接管
-            // 并弹原生 NSMenu。是否启停交给 services 启动时核实过的扩展状态：
-            // 启动这一刻 `pluginkit` 可能还没把扩展条目落库。
-            crate::core::desktop_menu::init(&app_handle);
 
             Ok(())
         })
@@ -468,6 +511,13 @@ pub fn run() {
                 }
                 tauri::WindowEvent::Focused(true) if label == "traypanel" => {
                     window::handle_tray_panel_focus_gained();
+                }
+                // 语音指令条失焦即收起（说完了按回车执行、或点外面放弃）。
+                tauri::WindowEvent::Focused(false) if label == "cmdbar" => {
+                    window::handle_voice_cmd_focus_lost(window.app_handle());
+                }
+                tauri::WindowEvent::Focused(true) if label == "cmdbar" => {
+                    window::handle_voice_cmd_focus_gained();
                 }
                 // 环形盘失焦即取消（点外部/切走，任务 22）；转换中不作废已提交任务。
                 tauri::WindowEvent::Focused(false) if label == "ring" => {

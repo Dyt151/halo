@@ -1,6 +1,6 @@
 //! 引擎注册表：把「有哪些引擎、它们能做什么」集中成一份可缓存的目录。
 //!
-//! 对照 docs/REA-Filee-Conversion.md §2.4 的 `ConverterCatalog`：
+//! 对照 README「三、环形文件转换」 的 `ConverterCatalog`：
 //! - 某个引擎不可用只让它自己的边消失（`EngineStatus::Missing`），不影响整张图；
 //! - `refresh()` 让边走一次重建（将来接外部引擎时用得上）。
 
@@ -15,7 +15,7 @@ pub mod webprint;
 
 use std::sync::{Mutex, OnceLock};
 
-use super::edge::{ConversionEdge, ConverterEngine, EngineId, EngineStatus};
+use super::edge::{ConversionEdge, ConverterEngine, EngineId};
 use crate::lock_ext::LockExt;
 
 static ENGINES: OnceLock<Vec<Box<dyn ConverterEngine>>> = OnceLock::new();
@@ -66,14 +66,6 @@ pub fn edges() -> Vec<ConversionEdge> {
 /// 使边缓存失效（引擎状态变化后调用）。
 pub fn refresh() {
     *EDGES.lock_ok() = None;
-}
-
-/// 引擎状态快照（诊断 / 设置页展示用）。
-pub fn statuses() -> Vec<(EngineId, &'static str, EngineStatus)> {
-    engines()
-        .iter()
-        .map(|e| (e.id(), e.display_name(), e.status()))
-        .collect()
 }
 
 #[cfg(test)]
